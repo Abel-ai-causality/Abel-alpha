@@ -15,21 +15,16 @@ Agent:    "Found Sharpe 1.8 from causal parents. 3 KEEPs from 50 experiments.
 
 ```mermaid
 graph LR
-    D["🔍 Discover\nAbel CAP → causal parents"]
-    B["🔨 Build\nstrategy.py from scratch"]
-    V["⚖️ Validate\ncausal-edge metric triangle"]
-    L["🧠 Learn\ncompound on baseline"]
+    D["🔍 Discover<br/>Abel CAP → causal parents"]
+    B["🔨 Build<br/>strategy.py from scratch"]
+    V["⚖️ Validate<br/>causal-edge metric triangle"]
+    L["🧠 Learn<br/>compound on baseline"]
 
     D -- "Axiom 1: K honest" --> B
     B -- "Axiom 2: no look-ahead" --> V
     V -- "KEEP ✓" --> L
     V -. "DISCARD ✗" .-> B
     L --> D
-
-    style D fill:#1a1a2e,stroke:#0f3460,color:#e94560
-    style B fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style V fill:#1a1a2e,stroke:#0f3460,color:#0fff50
-    style L fill:#1a1a2e,stroke:#0f3460,color:#eee
 ```
 
 The agent is the quant. The student is the client. causal-alpha is the methodology that makes it honest.
