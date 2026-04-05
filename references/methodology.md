@@ -83,24 +83,37 @@ Same signal with Sharpe 1.8:
 
 K is small not because you searched less. K is small because you only searched for what can survive. What can survive = causal links = regime-invariant relationships. The honest search space is the causal search space.
 
-## The 5 Invariants with Production Proofs
+## Axioms and Constraints — with Production Proofs
 
-These invariants are proven by three live strategies totaling 3,900+ trading days:
+**Axioms** follow from math. They cannot be wrong.
 
-**1. Causal discovery reduces K, making DSR honest.**
-Abel gives ~10-25 mechanistically justified parents instead of scanning ~10,000 pairs. ETH: Abel identified SSTK as causal parent. K=5. DSR=97%. Sharpe 4.27 over 1,403 trading days. A blind scan of the same universe would need Sharpe > 2.0 to pass at K=37,500.
+**A1. Causal K < blind K → DSR honest.**
+Abel gives ~10-25 mechanistically justified parents instead of scanning ~10,000 pairs. ETH: Abel identified SSTK as causal parent. K=5. DSR=97%. Sharpe 4.27 over 1,403 trading days. A blind scan of the same universe would need Sharpe > 2.0 to pass at K=37,500. This follows from Pearl + the DSR formula — not heuristic.
 
-**2. Metric triangle prevents gaming.**
-Lo-adjusted Sharpe (optimize) x IC (guardrail) x Omega (guardrail). All three are leverage-invariant. No single trick improves all three -- only genuine signal does. BNB proof: 158 experiments, IC caught every position-scaling trick that inflated Sharpe.
+**A2. Look-ahead = invalid backtest.**
+Definitional. Future data in features means the backtest is lying. Production proof: `rolling(5).mean()` without `.shift(1)` was caught — Sharpe dropped 4.03 → 4.00, PnL +375% → +342%. The honest number is always smaller.
 
-**3. Experiment loop with compounding.**
-Each KEEP updates the baseline. The next experiment builds on the latest best, not the original. META: 55 experiments, Sharpe 2.57 (Lo=2.21, IC=0.147, Omega=2.11). AAPL: 40 experiments, Sharpe 1.69 (Lo=1.62, IC=0.080, Omega=1.55). BNB: 158 experiments, Sharpe 2.82 (Lo=2.07, IC=0.264, Omega=2.82). Compounding stopped when 14+ consecutive discards confirmed the Pareto frontier.
+**Constraints** are derived from 200+ experiments. Strong, theory-grounded, but questionable with evidence.
 
-**4. Look-ahead zero-tolerance (structural, not instructional).**
-Every `rolling().stat()` must have `.shift(1)`. Every feature uses `shift(lag)` where lag >= 1. Train/test splits strictly chronological. Production proof: a look-ahead bug in `rolling(5).mean()` without shift was caught and fixed -- Sharpe dropped from 4.03 to 4.00, PnL from +375% to +342%. The honest number is always smaller.
+**C1. Multi-dimensional validation > single metric.**
+Currently: Lo-adjusted Sharpe × IC × Omega. Three orthogonal, leverage-invariant spaces (ratio, rank, distribution shape). No known transformation improves all three except genuine signal. But the specific three metrics could evolve — the PRINCIPLE is permanent, the implementation is our current best. causal-edge owns the definition and computation.
 
-**5. Explore means new information, not subtraction.**
-Removing features or changing params are exploit variants. Real explore: new data source, new causal depth (multihop), new asset relationships. BNB proof: direct Abel parents gave only 2 of top-18 signals. Adding 2-hop parents + 8 crypto peers (ADA, ETH, SOL, XRP) boosted IC by 34%. 100 "explore" experiments that only subtracted features produced 0 keeps. Actual exploration -- adding crypto peer spreads -- was the breakthrough.
+Why these three work — the 38-experiment proof:
+
+| Xcorr Scale | Lo-adj | IC | Sharpe | Verdict |
+|-------------|--------|----|--------|---------|
+| 1.25 / 0.75 | 2.302 | 0.441 | 4.218 | Baseline |
+| 1.50 / 0.50 | 2.353 | 0.549 | 4.387 | Improving |
+| **1.75 / 0.25** | **2.367** | **0.569** | **4.414** | **Optimal** |
+| 2.00 / 0.00 | 2.375 | **0.403 ↓** | 4.425 | **IC crashed — triangle caught it** |
+
+At 2.0/0.0, Lo and Sharpe still rose but IC collapsed 29%. This is concentration gaming (zeroing out low-correlation positions). Single-metric validation would have KEPT this. The triangle caught it.
+
+**C2. Serial compounding > pre-defined grid.**
+Each KEEP updates baseline. BNB: 158 serial → Sharpe 2.82. META: 55 experiments → 2.57. AAPL: 40 → 1.69. Compounding stopped when 14+ consecutive discards confirmed Pareto. Could theoretically fail on non-convex frontiers — hasn't in 200+ experiments.
+
+**C3. Explore = genuinely new information.**
+Removing features or changing params = exploit variant. Real explore: new data source, new causal depth, new relationships. BNB: 100 "explore" that subtracted → 0 keeps. Adding 8 crypto peers → IC +34%. Strong heuristic — an edge case where removing noise IS the right move could exist.
 
 ## The Closed Loop
 

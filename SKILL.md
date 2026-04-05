@@ -28,17 +28,21 @@ Causation is the only edge that survives regime change. Correlation is a propert
 | "research X" / "find alpha" / "autoresearch" | **research** | Autonomous experiment loop with KEEP/DISCARD | `references/experiment-loop.md` |
 | "show results" / "what worked?" | **report** | Read `results.tsv` + `memory.md`, summarize | (direct file reads) |
 
-## The 5 Invariants
+## Axioms and Constraints
 
-1. **Causal discovery reduces K, making DSR honest.** Abel gives ~10 mechanistically justified parents instead of scanning ~10,000 pairs. Fewer trials = discoveries that survive deflation.
+**Axioms** are derived from math. They cannot be wrong. Never question them.
 
-2. **Metric triangle prevents gaming.** Lo-adjusted Sharpe (optimize) x IC (guardrail) x Omega (guardrail). All three are leverage-invariant. No single trick improves all three — only genuine signal does.
+1. **Causal K < blind K → DSR honest.** Follows from Pearl's definition of causation + the DSR formula. Abel gives ~10 mechanistically justified parents vs ~10,000 blind scan pairs. Same signal at Sharpe 1.8: DSR 97% (causal) vs 41% (blind).
 
-3. **Experiment loop with compounding.** Each KEEP updates the baseline. The next experiment builds on the latest best, not the original. Improvements accumulate; pre-defining all experiments kills compounding.
+2. **Look-ahead = invalid backtest.** Definitional. Future data in features = the backtest is lying. Every `rolling().stat()` must have `.shift(1)`. Violations = auto-FAIL, zero tolerance, no exceptions.
 
-4. **Look-ahead zero-tolerance (structural, not instructional).** Every `rolling().stat()` must have `.shift(1)`. Every feature uses `shift(lag)` where lag >= 1. Train/test splits strictly chronological. Violations = auto-FAIL, no exceptions.
+**Constraints** are derived from 200+ experiments across 6 assets. They are our current best — strong, grounded in theory, but an agent should understand WHY they exist (read `references/methodology.md`) and can question them with evidence.
 
-5. **Explore means new information, not subtraction.** Removing features, disabling overlays, or changing params are exploit variants. Real explore: new data source, new causal depth (3-hop), new asset relationships, new ML architecture. BNB proof: 100 "explore" experiments that only subtracted features produced 0 keeps.
+3. **Multi-dimensional validation > single metric.** Currently: Lo-adjusted Sharpe × IC × Omega (three orthogonal, leverage-invariant dimensions). The SPECIFIC three could evolve. The PRINCIPLE that no single metric suffices is permanent. causal-edge defines + computes the triangle — this skill applies it.
+
+4. **Serial compounding > pre-defined grid.** Each KEEP updates baseline. Next experiment builds on latest best. Could theoretically fail on non-convex Pareto frontiers — but in 200+ experiments across 6 assets, it hasn't. BNB proof: 158 serial → Sharpe 2.82; grid search of same space → noise.
+
+5. **Explore = genuinely new information.** Removing features or changing params = exploit variant. Real explore: new data source, new causal depth, new asset relationships, new ML architecture. BNB proof: 100 "explore" that only subtracted → 0 keeps. Strong heuristic, not physics — an edge case where removing noise IS the right move could exist.
 
 ## Abel CAP — Causal Discovery Engine
 
@@ -144,31 +148,32 @@ Each KEEP updates the baseline. The next experiment compounds on it.
 
 Full KEEP report must include: triangle metrics + returns (Sharpe/Calmar/PF) + risk (MaxDD/VaR/CVaR/Hill) + distribution (skew/kurt) + robustness (DSR/PBO/OOS) + yearly breakdown.
 
-## Invariants and Constraints (Machine-Readable)
+## Machine-Readable Rules
 
 ```
-INVARIANT: All discoveries validated by metric triangle.
-INVARIANT: K tracked for DSR honesty.
-INVARIANT: Each KEEP compounds on latest baseline.
-INVARIANT: Look-ahead violations = auto-FAIL.
-INVARIANT: Explore = new information, not parameter tweaks.
+AXIOM: Causal K < blind K → DSR honest. (Pearl + DSR formula. Cannot be wrong.)
+AXIOM: Look-ahead = invalid backtest. (Definitional. Zero tolerance.)
 
-CONSTRAINT: strategy.py exports run_strategy(data) -> (pnl, dates, positions).
-CONSTRAINT: evaluate.py immutable — agent modifies only strategy.py.
-CONSTRAINT: results.tsv append-only, git-committed after each experiment.
-CONSTRAINT: memory.md updated every 10 experiments.
-CONSTRAINT: pip install causal-edge required for validation.
+CONSTRAINT: Multi-dimensional validation > single metric. (Currently Lo×IC×Omega via causal-edge.)
+CONSTRAINT: Serial compounding > pre-defined grid. (KEEP updates baseline.)
+CONSTRAINT: Explore = new information, not subtraction. (Questionable with evidence.)
+
+PROTOCOL: strategy.py exports run_strategy(data) -> (pnl, dates, positions).
+PROTOCOL: evaluate.py immutable — agent modifies only strategy.py.
+PROTOCOL: results.tsv append-only, git-committed after each experiment.
+PROTOCOL: memory.md updated every 10 experiments.
+PROTOCOL: pip install causal-edge required for validation.
 ```
 
 ## When to Read References
 
 | You need... | Read | Why |
 |---|---|---|
-| The full causal argument (Pearl, DGP, regime invariance) | `references/methodology.md` | First-principles foundation |
-| Step-by-step Abel CAP discovery protocol | `references/discovery-protocol.md` | Exact API call sequence, multihop expansion, K accounting |
-| Autonomous experiment loop mechanics | `references/experiment-loop.md` | KEEP/DISCARD rules, compounding, explore/exploit, memory system |
-| Look-ahead rules and structural constraints | `references/constraints.md` | shift/rolling rules, train/test splits, auto-FAIL conditions |
-| Metric triangle deep dive | `references/metric-triangle.md` | Why Lo x IC x Omega, how each trick gets caught, leverage invariance |
-| Feature patterns that survived 150+ experiments | `references/proven-patterns.md` | Dual-lag xcorr, binary thresholds, persistence penalty, RSI overlay |
+| Why causal works (Pearl, DGP, axiom proofs, triangle rationale) | `references/methodology.md` | First-principles foundation + why 3 metrics |
+| Abel CAP discovery protocol | `references/discovery-protocol.md` | Multihop, K accounting, caching, fallback |
+| Experiment loop mechanics | `references/experiment-loop.md` | Cold-start, 7-step lifecycle, compounding, explore/exploit |
+| Look-ahead rules | `references/constraints.md` | 8 rules, two-layer detection, common traps |
+| Feature patterns that survived 200+ experiments | `references/proven-patterns.md` | Battle evidence for explore inspiration (NOT scaffold) |
+| Metric triangle formulas + execution | `causal-edge` framework | `pip install causal-edge` — owns definition + validation |
 
-SKILL.md gives you capability. References give you depth. Start here, go there when you need to.
+**5 reference files + causal-edge.** SKILL.md gives capability. References give depth. causal-edge gives execution.
