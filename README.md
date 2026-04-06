@@ -3,7 +3,7 @@
 **Your agent discovers what drives any asset. Then it researches 600 experiments overnight. You wake up to honest results.**
 
 ```
-You:    "research alpha for SOL"
+You:    "research alpha for APPL"
 Agent:  [gets Abel key: 1 click] → [discovers 12 causal parents]
         → [fetches 5 years of prices] → [writes first strategy]
         → [runs 50 experiments with anti-gaming validation]
