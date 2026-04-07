@@ -14,7 +14,7 @@ causal-edge research status        # progress
 flowchart TD
     D["DISCOVER — Abel CAP parents + blanket"]
     B["BUILD — agent writes strategy.py"]
-    V{"VALIDATE — causal-edge 15-test"}
+    V{"VALIDATE — causal-edge 13-test"}
     L["LEARN — compound on baseline"]
 
     D -->|"K honest"| B
