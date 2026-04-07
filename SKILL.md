@@ -33,6 +33,23 @@ Your job: write strategy.py. The references have the method.
 - **Validation failure?** It's your next research direction, not an obstacle. DSR low = K too high. MaxDD bad = drawdown signal weak. Don't hack metrics — fix the signal. See `references/experiment-loop.md#addressing-validation-failures`.
 - **When to stop?** 20+ consecutive discards AND 3+ genuine explore dimensions tried = honest failure. Report it. Don't burn compute on noise.
 
+## Parallelism (correctness first, then max throughput)
+
+Parallelize everything that's independent. Never parallelize what's sequential.
+
+**Parallel (independent):**
+- Abel queries: parents + blanket + children are 3 independent API calls
+- Data fetching: each ticker's price history is independent
+- Multi-asset research: research SOL and TSLA simultaneously (separate workspaces)
+- Dashboard generation: each strategy's charts are independent
+- Backfill: multiple strategies can backfill concurrently
+
+**Sequential (dependent — compounding requires order):**
+- Experiment loop: exp002 depends on exp001's result. Serial, not parallel.
+- KEEP decision: validate THEN record. Cannot record before verdict.
+
+**In practice:** use Agent tool to dispatch parallel research across assets. Within each asset, experiments are serial. `causal-edge` handles IO parallelism (discovery, dashboard) internally.
+
 ## References
 
 | Need | Read |
