@@ -4,10 +4,12 @@
 
 ```bash
 pip install git+https://github.com/cauchyturing/causal-edge.git
-causal-edge research init TSLA     # Abel discovery + workspace
-# edit strategy.py
-causal-edge research run           # validate, record, enforce
-causal-edge research status        # progress
+causal-edge init my-portfolio
+cd my-portfolio
+causal-edge discover TSLA          # Abel discovery
+causal-edge run                    # execute strategies
+causal-edge validate               # validate and enforce quality gate
+causal-edge status                 # progress summary
 ```
 
 ```mermaid
@@ -27,7 +29,7 @@ flowchart TD
 ## Three-Layer Design
 
 ```
-L1: Code enforce (LLM-agnostic)     → causal-edge research CLI
+L1: Code enforce (LLM-agnostic)     → causal-edge CLI
     K auto-computed from strategy.py AST
     validate_strategy() runs every experiment
     KEEP requires PASS (code refuses otherwise)
@@ -67,7 +69,15 @@ Correlation breaks when regimes change. Causation doesn't (Pearl, 1995).
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/cauchyturing/causal-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: `causal-edge research init <TICKER>`
+Build your own: `causal-edge init <name>` then `causal-edge discover <TICKER>`
+
+## Abel-Pro Mapping
+
+- Abel-alpha worktree for the Abel-Pro integration: `D:\codes\causal-alpha\.tree\abel-pro`
+- Abel-alpha branch for that worktree: `abel-pro`
+- Paired Abel-edge worktree for validation and execution: `D:\codes\open_source\causal-edge\.tree\abel-pro-demo`
+- Paired Abel-edge branch: `abel-pro-demo`
+- Abel auth and data environment defaults to prod
 
 ## Files
 
