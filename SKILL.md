@@ -17,14 +17,15 @@ metadata:
 Causation survives regime change. Correlation doesn't.
 
 ```bash
-causal-edge research init <TICKER>    # creates workspace + runs Abel discovery
-# edit strategy.py → implement run_strategy()
-causal-edge research run              # validates, records, enforces everything
-causal-edge research status           # progress summary
+causal-edge init <name>               # creates workspace
+causal-edge discover <TICKER>         # runs Abel discovery
+causal-edge run                       # executes strategies
+causal-edge validate                  # validates and enforces quality gates
+causal-edge status                    # progress summary
 ```
 
-The CLI enforces validation, K tracking, look-ahead checks, and result recording.
-Your job: write strategy.py. The references have the method.
+The CLI enforces validation, look-ahead checks, and result recording.
+Your job: write the strategy implementation. The references have the method.
 
 ## Judgment Calls (only you can make these)
 
@@ -61,3 +62,11 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 | Why causal works (Pearl, DGP, axioms) | `references/methodology.md` |
 
 **REQUIRED SKILL:** `causal-abel` for Abel API access (cap_probe.py, auth flow).
+
+## Abel-Pro Mapping
+
+- Abel-alpha worktree for the Abel-Pro integration: `D:\codes\causal-alpha\.tree\abel-pro`
+- Abel-alpha branch for that worktree: `abel-pro`
+- Paired Abel-edge worktree for validation and execution: `D:\codes\open_source\causal-edge\.tree\abel-pro-demo`
+- Paired Abel-edge branch: `abel-pro-demo`
+- Abel auth and data environment defaults to prod
