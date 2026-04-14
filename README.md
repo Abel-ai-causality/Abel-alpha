@@ -3,13 +3,19 @@
 **Causal alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
 
 ```bash
-pip install git+https://github.com/cauchyturing/causal-edge.git
+pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
 causal-edge init my-portfolio
 cd my-portfolio
 causal-edge discover TSLA          # Abel discovery
 causal-edge run                    # execute strategies
 causal-edge validate               # validate and enforce quality gate
 causal-edge status                 # progress summary
+```
+
+If that `git+https` install path fails in your network environment, use the same public repo via zip:
+
+```bash
+pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/main.zip
 ```
 
 ```mermaid
@@ -67,9 +73,9 @@ Correlation breaks when regimes change. Causation doesn't (Pearl, 1995).
 | Equity B | 1.69 | 15/15 PASS | 1,200+ days |
 | Crypto D | 2.06 | 13/13 PASS | 1,300+ days |
 
-All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/cauchyturing/causal-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
+All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: `causal-edge init <name>` then `causal-edge discover <TICKER>`
+Build your own: install `Abel-edge`, then run `causal-edge init <name>` and `causal-edge discover <TICKER>`.
 
 ## Abel-Pro Mapping
 
@@ -102,4 +108,4 @@ causal-abel    → Abel API access (cap_probe.py)
 
 ## License
 
-MIT. Built by [Stephen](https://github.com/cauchyturing) / [Abel AI](https://github.com/Abel-ai-causality/).
+MIT. Built by [Abel AI](https://github.com/Abel-ai-causality/).

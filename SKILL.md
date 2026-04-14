@@ -11,12 +11,15 @@ metadata:
       bins: [python]
       packages: [causal-edge]
     optionalEnv: [ABEL_API_KEY]
-    homepage: https://github.com/cauchyturing/causal-alpha
+    homepage: https://github.com/Abel-ai-causality/Abel-alpha
 ---
 
 Causation survives regime change. Correlation doesn't.
 
+Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow.
+
 ```bash
+pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
 causal-edge init <name>               # creates workspace
 causal-edge discover <TICKER>         # runs Abel discovery
 causal-edge run                       # executes strategies
