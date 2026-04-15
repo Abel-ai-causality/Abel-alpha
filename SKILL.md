@@ -14,7 +14,7 @@ metadata:
     homepage: https://github.com/Abel-ai-causality/Abel-alpha
 ---
 
-Causation survives regime change. Correlation doesn't.
+Causation is the default prior because it survives regime change more often than correlation.
 
 Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow.
 
@@ -29,6 +29,8 @@ causal-edge status                    # progress summary
 
 The CLI enforces validation, look-ahead checks, and result recording.
 Your job: write the strategy implementation. The references have the method.
+
+Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 
 ## Judgment Calls (only you can make these)
 

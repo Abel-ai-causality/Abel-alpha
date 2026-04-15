@@ -169,8 +169,9 @@ must run independent autoresearch to find its optimal horizon weights.
 **Why it works**: Captures relative crypto momentum. When BNB is outperforming peers,
 it's experiencing idiosyncratic flow, not just beta lift. The spread signal is
 mean-reverting over medium horizons and provides information orthogonal to
-single-asset momentum. Abel shows ETH→BNB causal weight = 0, but cross-asset
-xcorr works via correlation not causation — still tradeable.
+single-asset momentum. Abel shows ETH→BNB causal weight = 0, so this is a
+correlation-derived supplement rather than a causal core signal. It was still
+tradeable, but only as an empirically validated add-on.
 
 **When**: BNB Phase 1 research. Adding 8 crypto peers (ADA, ETH, SOL, XRP, etc.)
 was the single biggest breakthrough: IC +34%, top-18 parent list includes ADA and ETH.
