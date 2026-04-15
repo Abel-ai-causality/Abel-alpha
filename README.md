@@ -61,11 +61,15 @@ L4: Agent autonomy (留白)            → strategy.py
 
 ## Why Causal
 
-Correlation breaks when regimes change. Causation doesn't (Pearl, 1995).
+Correlation breaks more easily when regimes change. Causation is the default search prior because it is more likely to persist (Pearl, 1995).
 
 - **K is small** — Abel gives ~10 justified parents vs ~10,000 blind scan → DSR honest
 - **Signals persist** — causal links survive bull→bear transitions
 - **Discovery is automated** — Abel CAP over 11K nodes, agent handles the rest
+
+Correlation-derived signals are allowed, but only as a second-class supplement to a causal thesis. They must earn their place empirically and should not replace Abel-driven discovery as the default search process.
+
+Without Abel, fallback discovery is still useful for research continuity, but it carries weaker discovery evidence: K is effectively higher, confidence is lower, and results should not be described as equivalent to Abel-led causal discovery.
 
 ## Production Proof
 

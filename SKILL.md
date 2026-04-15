@@ -14,7 +14,7 @@ metadata:
     homepage: https://github.com/Abel-ai-causality/Abel-alpha
 ---
 
-Causation survives regime change. Correlation doesn't.
+Causation is the default prior because it survives regime change more often than correlation.
 
 Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
@@ -30,12 +30,15 @@ python scripts/research_narrative.py check --session research/<ticker>/<exp-id> 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Your job: write the strategy implementation.
 
+Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
+
 ## Judgment Calls (only you can make these)
 
 - **Explore vs exploit?** New data dimension = explore. Parameter tweak = exploit. Swapping ML framework = exploit. See `references/experiment-loop.md`.
+- **Discovery priority?** Keep exploration open, but default to direct parents first. Inside the Markov blanket, prioritize parents over children, and children over spouses/co-parents. Treat crypto peers as low-priority supplements. See `references/discovery-protocol.md`.
 - **Micro-cap parents look weird?** That's the signal. Causal info transmits from low-attention assets. Abel's graph is mostly micro-caps by design.
 - **Validation failure?** It's your next research direction, not an obstacle. DSR low = K too high. MaxDD bad = drawdown signal weak. Don't hack metrics — fix the signal. See `references/experiment-loop.md#addressing-validation-failures`.
-- **When to stop?** 20+ consecutive discards AND 3+ genuine explore dimensions tried = honest failure. Report it. Don't burn compute on noise.
+- **When to stop?** Treat 20+ consecutive discards AND 3+ genuine explore dimensions as the floor, not the full rule. Stop only when recent rounds show no material validation improvement and no high-quality new direction remains. Report honest failure. Don't burn compute on noise.
 
 ## Parallelism (correctness first, then max throughput)
 
