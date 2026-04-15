@@ -4,7 +4,7 @@
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1
+python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1 --discover
 python scripts/research_narrative.py init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 python scripts/research_narrative.py run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 python scripts/research_narrative.py status --session research/tsla/tsla-v1
@@ -18,6 +18,8 @@ pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/ma
 ```
 
 If `causal-edge discover <TICKER>` reports a missing Abel key, install `causal-abel`, complete its OAuth flow, and rerun the same `discover` command. `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then `.agents/skills/causal-abel/.env.skill`, so agent-driven installs can reuse the `causal-abel` auth file without copying the key into each workspace.
+
+Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`.
 
 ```mermaid
 flowchart TD
@@ -84,7 +86,7 @@ Without Abel, fallback discovery is still useful for research continuity, but it
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id>`.
+Build your own: install `Abel-edge`, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id> --discover`.
 
 ## Abel-Pro Mapping
 

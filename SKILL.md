@@ -20,7 +20,7 @@ Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` C
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover
 python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 python scripts/research_narrative.py status --session research/<ticker>/<exp-id>
@@ -28,7 +28,9 @@ python scripts/research_narrative.py check --session research/<ticker>/<exp-id> 
 ```
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
-keep/discard, process records, and narrative summaries. Your job: write the strategy implementation.
+keep/discard, process records, and narrative summaries. Use `init-session --discover`
+when you want the live Abel discovery persisted into `discovery.json` and the event trail.
+Your job: write the strategy implementation.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 
