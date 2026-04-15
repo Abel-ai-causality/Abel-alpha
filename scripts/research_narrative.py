@@ -69,6 +69,17 @@ def main() -> int:
     init_session.add_argument("--ticker", required=True)
     init_session.add_argument("--exp-id", required=True)
     init_session.add_argument("--root", default="research")
+    init_session.add_argument(
+        "--discover",
+        action="store_true",
+        help="Run live Abel discovery and persist it into discovery.json",
+    )
+    init_session.add_argument(
+        "--discover-limit",
+        type=int,
+        default=10,
+        help="Maximum Abel nodes to record per discovery call",
+    )
 
     init_branch = sub.add_parser("init-branch", help="Create a branch under a session")
     init_branch.add_argument("--session", required=True)
@@ -101,7 +112,13 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "init-session":
-        init_session_dir(args.ticker, args.exp_id, Path(args.root))
+        init_session_dir(
+            args.ticker,
+            args.exp_id,
+            Path(args.root),
+            discover=args.discover,
+            discover_limit=args.discover_limit,
+        )
         return 0
     if args.command == "init-branch":
         init_branch_dir(Path(args.session), args.branch_id)
@@ -119,13 +136,28 @@ def main() -> int:
     return 1
 
 
-def init_session_dir(ticker: str, exp_id: str, root: Path) -> Path:
+def init_session_dir(
+    ticker: str,
+    exp_id: str,
+    root: Path,
+    *,
+    discover: bool = False,
+    discover_limit: int = 10,
+) -> Path:
     session = root / ticker.lower() / exp_id
     session.mkdir(parents=True, exist_ok=True)
+    discovery_data = None
+    if discover:
+        discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
     with SessionLock(session):
         write_tsv_header(session / "events.tsv", EVENTS_HEADER)
         discovery_path = session / "discovery.json"
-        if not discovery_path.exists():
+        if discovery_data is not None:
+            discovery_path.write_text(
+                json.dumps(discovery_data, indent=2),
+                encoding="utf-8",
+            )
+        elif not discovery_path.exists():
             discovery_path.write_text(
                 json.dumps(
                     {
@@ -156,8 +188,112 @@ def init_session_dir(ticker: str, exp_id: str, root: Path) -> Path:
                 "artifact_path": "",
             },
         )
+        if discovery_data is not None:
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "discovery_recorded",
+                    "branch_id": "",
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": (
+                        f"Recorded live Abel discovery with K={discovery_data['K_discovery']}"
+                    ),
+                    "artifact_path": str(discovery_path.relative_to(session)),
+                },
+            )
         render_session(session)
     return session
+
+
+def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
+    from causal_edge.plugins.abel.discover import discover_graph_nodes
+
+    parents_output = discover_graph_nodes(ticker.upper(), mode="parents", limit=limit)
+    blanket_output = discover_graph_nodes(ticker.upper(), mode="mb", limit=limit)
+
+    parents = parse_discovery_items(parents_output)
+    blanket_items = parse_discovery_items(blanket_output)
+    parent_keys = {(item["ticker"], item["field"]) for item in parents}
+
+    children = []
+    blanket_new = []
+    seen_children = set()
+    seen_blanket = set()
+
+    for item in blanket_items:
+        key = (item["ticker"], item["field"])
+        roles = item.get("roles", [])
+        if "child" in roles and key not in seen_children:
+            children.append({"ticker": item["ticker"], "field": item["field"]})
+            seen_children.add(key)
+            continue
+        if key in parent_keys or key in seen_blanket:
+            continue
+        blanket_new.append(
+            {
+                "ticker": item["ticker"],
+                "field": item["field"],
+                "roles": roles,
+            }
+        )
+        seen_blanket.add(key)
+
+    return {
+        "ticker": ticker.upper(),
+        "source": "abel_live",
+        "parents": parents,
+        "blanket_new": blanket_new,
+        "children": children,
+        "K_discovery": len(parents),
+        "created_at": _now(),
+    }
+
+
+def parse_discovery_items(output: str) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("  - ticker: "):
+            if current is not None:
+                items.append(current)
+            current = {"ticker": line.split(": ", 1)[1].strip(), "roles": []}
+            continue
+        if current is None:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("field: "):
+            current["field"] = stripped.split(": ", 1)[1].strip()
+            continue
+        if stripped.startswith("roles: [") and stripped.endswith("]"):
+            roles_text = stripped[len("roles: [") : -1].strip()
+            current["roles"] = [
+                role.strip() for role in roles_text.split(",") if role.strip()
+            ]
+
+    if current is not None:
+        items.append(current)
+
+    normalized = []
+    for item in items:
+        ticker = str(item.get("ticker", "")).strip()
+        field = str(item.get("field", "")).strip()
+        if not ticker or not field:
+            continue
+        normalized.append(
+            {
+                "ticker": ticker,
+                "field": field,
+                "roles": list(item.get("roles", [])),
+            }
+        )
+    return normalized
 
 
 def init_branch_dir(session: Path, branch_id: str) -> Path:
@@ -590,8 +726,8 @@ def build_thesis(branch: dict, discovery: dict) -> str:
         if latest
         else {}
     )
-    parents = ", ".join(discovery.get("parents", [])[:5]) or "none recorded"
-    blanket = ", ".join(discovery.get("blanket_new", [])[:5]) or "none recorded"
+    parents = format_discovery_nodes(discovery.get("parents", []), limit=5)
+    blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -612,6 +748,28 @@ Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.g
 
 {format_risks(latest_note.get("failures", "none"))}
 """
+
+
+def format_discovery_nodes(items: list[object], *, limit: int = 5) -> str:
+    rendered = []
+    for item in items[:limit]:
+        if isinstance(item, str):
+            rendered.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        ticker = str(item.get("ticker", "")).strip()
+        field = str(item.get("field", "")).strip()
+        roles = [
+            str(role).strip() for role in item.get("roles", []) if str(role).strip()
+        ]
+        label = ".".join(part for part in (ticker, field) if part)
+        if not label:
+            continue
+        if roles:
+            label = f"{label} ({', '.join(roles)})"
+        rendered.append(label)
+    return ", ".join(rendered) or "none recorded"
 
 
 def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
