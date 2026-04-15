@@ -4,12 +4,11 @@
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-causal-edge init my-portfolio
-cd my-portfolio
-causal-edge discover TSLA          # Abel discovery
-causal-edge run                    # execute strategies
-causal-edge validate               # validate and enforce quality gate
-causal-edge status                 # progress summary
+python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1
+python scripts/research_narrative.py init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+python scripts/research_narrative.py run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+python scripts/research_narrative.py status --session research/tsla/tsla-v1
+python scripts/research_narrative.py check --session research/tsla/tsla-v1 --strict
 ```
 
 If that `git+https` install path fails in your network environment, use the same public repo via zip:
@@ -18,36 +17,42 @@ If that `git+https` install path fails in your network environment, use the same
 pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/main.zip
 ```
 
+If `causal-edge discover <TICKER>` reports a missing Abel key, install `causal-abel`, complete its OAuth flow, and rerun the same `discover` command. `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then `.agents/skills/causal-abel/.env.skill`, so agent-driven installs can reuse the `causal-abel` auth file without copying the key into each workspace.
+
 ```mermaid
 flowchart TD
     D["DISCOVER — Abel CAP parents + blanket"]
-    B["BUILD — agent writes strategy.py"]
-    V{"VALIDATE — causal-edge 13-test"}
-    L["LEARN — compound on baseline"]
+    B["BUILD — candidate branch in session workspace"]
+    V{"VALIDATE — audited gate + baseline comparison"}
+    L["LEARN — keep/discard and branch next round"]
 
     D -->|"K honest"| B
     B -->|"no look-ahead"| V
-    V -->|"PASS = KEEP"| L
-    V -.->|"FAIL = DISCARD"| B
+    V -->|"PASS + improve = KEEP"| L
+    V -.->|"FAIL / no improve = DISCARD"| B
     L -->|"next cycle"| D
 ```
 
-## Three-Layer Design
+## Four-Layer Design
 
 ```
-L1: Code enforce (LLM-agnostic)     → causal-edge CLI
+L1: Raw evaluation (LLM-agnostic)   → causal-edge CLI
     K auto-computed from strategy.py AST
     validate_strategy() runs every experiment
-    KEEP requires PASS (code refuses otherwise)
-    Look-ahead static check before execution
+    emits raw verdict, metrics, failures, K
 
-L2: Judgment guidance (skill text)   → SKILL.md (280 words)
+L2: Research organization            → Abel-alpha narrative layer
+    session / branch / round structure
+    keep/discard and baseline updates
+    README / thesis / memory generation
+
+L3: Judgment guidance (skill text)   → SKILL.md
     Explore vs exploit distinction
     Micro-cap parents = the signal
     Validation failures = research direction
     When to declare honest failure
 
-L3: Agent autonomy (留白)            → strategy.py
+L4: Agent autonomy (留白)            → strategy.py
     What architecture, what features, what ML
     Every asset is different
 ```
@@ -79,7 +84,7 @@ Without Abel, fallback discovery is still useful for research continuity, but it
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, then run `causal-edge init <name>` and `causal-edge discover <TICKER>`.
+Build your own: install `Abel-edge`, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id>`.
 
 ## Abel-Pro Mapping
 
@@ -105,8 +110,8 @@ references/
 
 ```
 Abel CAP       → causal graph (discovery)
-causal-alpha   → research methodology (this skill)
-causal-edge    → validation + enforcement (L1 code)
+causal-alpha   → research methodology + organization (this skill)
+causal-edge    → raw validation facts
 causal-abel    → Abel API access (cap_probe.py)
 ```
 
