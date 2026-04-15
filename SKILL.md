@@ -20,14 +20,13 @@ Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` C
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-causal-edge init <name>               # creates workspace
-causal-edge discover <TICKER>         # runs Abel discovery
-causal-edge run                       # executes strategies
-causal-edge validate                  # validates and enforces quality gates
-causal-edge status                    # progress summary
+causal-edge research init <TICKER> --branch-id <branch-id>
+causal-edge research run --workdir research/<ticker>/<exp_id>/branches/<branch-id>
+causal-edge research status --workdir research/<ticker>/<exp_id>
+causal-edge research check --workdir research/<ticker>/<exp_id>
 ```
 
-The CLI enforces validation, look-ahead checks, and result recording.
+The CLI enforces validation, look-ahead checks, keep/discard decisions, and session/branch/round traceability.
 Your job: write the strategy implementation. The references have the method.
 
 ## Judgment Calls (only you can make these)
@@ -45,12 +44,14 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 - Abel queries: parents + blanket + children are 3 independent API calls
 - Data fetching: each ticker's price history is independent
 - Multi-asset research: research SOL and TSLA simultaneously (separate workspaces)
+- Multi-branch research: one exploration session can branch into multiple candidate branches
 - Dashboard generation: each strategy's charts are independent
 - Backfill: multiple strategies can backfill concurrently
 
 **Sequential (dependent — compounding requires order):**
 - Experiment loop: exp002 depends on exp001's result. Serial, not parallel.
-- KEEP decision: validate THEN record. Cannot record before verdict.
+- KEEP decision: validate, compare vs baseline, THEN record. Cannot record before verdict.
+- Process record: keep `events.tsv` and round notes good enough to explain what happened before the next validation starts.
 
 **In practice:** use Agent tool to dispatch parallel research across assets. Within each asset, experiments are serial. `causal-edge` handles IO parallelism (discovery, dashboard) internally.
 

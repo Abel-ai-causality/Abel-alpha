@@ -3,8 +3,8 @@
 ## Quick Start
 
 ```bash
-causal-edge research init <TICKER>
-# → discovery.json auto-populated from Abel (if API key available)
+causal-edge research init <TICKER> --branch-id graph-v1
+# → research/<ticker>/<exp_id>/discovery.json auto-populated from Abel (if API key available)
 ```
 
 ## The Multihop Protocol
@@ -36,6 +36,10 @@ Production proof:
 
 K is auto-computed by `causal-edge research run` from strategy.py source.
 You don't need to track K manually.
+
+Discovery belongs to the exploration session first, not to only one branch file. Use the
+session README to explain how discovery led to one or more candidate branches, then keep the
+branch-specific thesis and rounds inside each `branches/<branch-id>/` directory.
 
 ## Enrichment
 

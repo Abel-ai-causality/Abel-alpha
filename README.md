@@ -4,12 +4,10 @@
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-causal-edge init my-portfolio
-cd my-portfolio
-causal-edge discover TSLA          # Abel discovery
-causal-edge run                    # execute strategies
-causal-edge validate               # validate and enforce quality gate
-causal-edge status                 # progress summary
+causal-edge research init TSLA --branch-id graph-v1
+causal-edge research run --workdir research/tsla/<exp_id>/branches/graph-v1 -d "baseline"
+causal-edge research status --workdir research/tsla/<exp_id>
+causal-edge research check --workdir research/tsla/<exp_id>
 ```
 
 If that `git+https` install path fails in your network environment, use the same public repo via zip:
@@ -23,14 +21,14 @@ If `causal-edge discover <TICKER>` reports a missing Abel key, install `causal-a
 ```mermaid
 flowchart TD
     D["DISCOVER — Abel CAP parents + blanket"]
-    B["BUILD — agent writes strategy.py"]
-    V{"VALIDATE — causal-edge 13-test"}
-    L["LEARN — compound on baseline"]
+    B["BUILD — candidate branch in session workspace"]
+    V{"VALIDATE — audited gate + baseline comparison"}
+    L["LEARN — keep/discard and branch next round"]
 
     D -->|"K honest"| B
     B -->|"no look-ahead"| V
-    V -->|"PASS = KEEP"| L
-    V -.->|"FAIL = DISCARD"| B
+    V -->|"PASS + improve = KEEP"| L
+    V -.->|"FAIL / no improve = DISCARD"| B
     L -->|"next cycle"| D
 ```
 
@@ -40,8 +38,8 @@ flowchart TD
 L1: Code enforce (LLM-agnostic)     → causal-edge CLI
     K auto-computed from strategy.py AST
     validate_strategy() runs every experiment
-    KEEP requires PASS (code refuses otherwise)
-    Look-ahead static check before execution
+    KEEP requires PASS + baseline improvement
+    Session/branch/round traceability enforced by research check
 
 L2: Judgment guidance (skill text)   → SKILL.md (280 words)
     Explore vs exploit distinction
@@ -77,7 +75,7 @@ Correlation breaks when regimes change. Causation doesn't (Pearl, 1995).
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, then run `causal-edge init <name>` and `causal-edge discover <TICKER>`.
+Build your own: install `Abel-edge`, then run `causal-edge research init <TICKER> --branch-id <id>`.
 
 ## Abel-Pro Mapping
 
