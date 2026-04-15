@@ -16,10 +16,16 @@ metadata:
 
 Causation is the default prior because it survives regime change more often than correlation.
 
-Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
+Main install entrypoint: create and activate a virtual environment, install `Abel-edge`, then use the `causal-edge` CLI. If live Abel discovery needs auth, complete `causal-edge login` or install `causal-abel` and finish its OAuth flow before running `init-session --discover`. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
+python -m venv .venv
+# PowerShell: .venv\Scripts\Activate.ps1
+# bash/zsh: source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+causal-edge login  # or causal-abel OAuth before live discovery
 python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover
 python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
