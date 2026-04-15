@@ -3,8 +3,8 @@
 ## Quick Start
 
 ```bash
-causal-edge research init <TICKER> --branch-id graph-v1
-# → research/<ticker>/<exp_id>/discovery.json auto-populated from Abel (if API key available)
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+# → research/<ticker>/<exp_id>/discovery.json created for Abel-alpha organization
 ```
 
 ## The Multihop Protocol
@@ -34,7 +34,7 @@ Production proof:
 4. **Multihop** — for each child ≠ target, get its parents. Add novel ones as hop-2
 5. **Crypto peers** — for crypto targets, check `graph.paths` from major crypto assets
 
-K is auto-computed by `causal-edge research run` from strategy.py source.
+K is auto-computed by `causal-edge evaluate` from strategy.py source.
 You don't need to track K manually.
 
 Discovery belongs to the exploration session first, not to only one branch file. Use the

@@ -4,10 +4,11 @@
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-causal-edge research init TSLA --branch-id graph-v1
-causal-edge research run --workdir research/tsla/<exp_id>/branches/graph-v1 -d "baseline"
-causal-edge research status --workdir research/tsla/<exp_id>
-causal-edge research check --workdir research/tsla/<exp_id>
+python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1
+python scripts/research_narrative.py init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+python scripts/research_narrative.py run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+python scripts/research_narrative.py status --session research/tsla/tsla-v1
+python scripts/research_narrative.py check --session research/tsla/tsla-v1 --strict
 ```
 
 If that `git+https` install path fails in your network environment, use the same public repo via zip:
@@ -32,22 +33,26 @@ flowchart TD
     L -->|"next cycle"| D
 ```
 
-## Three-Layer Design
+## Four-Layer Design
 
 ```
-L1: Code enforce (LLM-agnostic)     → causal-edge CLI
+L1: Raw evaluation (LLM-agnostic)   → causal-edge CLI
     K auto-computed from strategy.py AST
     validate_strategy() runs every experiment
-    KEEP requires PASS + baseline improvement
-    Session/branch/round traceability enforced by research check
+    emits raw verdict, metrics, failures, K
 
-L2: Judgment guidance (skill text)   → SKILL.md (280 words)
+L2: Research organization            → Abel-alpha narrative layer
+    session / branch / round structure
+    keep/discard and baseline updates
+    README / thesis / memory generation
+
+L3: Judgment guidance (skill text)   → SKILL.md
     Explore vs exploit distinction
     Micro-cap parents = the signal
     Validation failures = research direction
     When to declare honest failure
 
-L3: Agent autonomy (留白)            → strategy.py
+L4: Agent autonomy (留白)            → strategy.py
     What architecture, what features, what ML
     Every asset is different
 ```
@@ -75,7 +80,7 @@ Correlation breaks when regimes change. Causation doesn't (Pearl, 1995).
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, then run `causal-edge research init <TICKER> --branch-id <id>`.
+Build your own: install `Abel-edge`, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id>`.
 
 ## Abel-Pro Mapping
 
@@ -101,8 +106,8 @@ references/
 
 ```
 Abel CAP       → causal graph (discovery)
-causal-alpha   → research methodology (this skill)
-causal-edge    → validation + enforcement (L1 code)
+causal-alpha   → research methodology + organization (this skill)
+causal-edge    → raw validation facts
 causal-abel    → Abel API access (cap_probe.py)
 ```
 

@@ -3,27 +3,28 @@
 ## Quick Start
 
 ```bash
-causal-edge research init <TICKER> --branch-id graph-v1
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+python scripts/research_narrative.py init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
 # edit research/<ticker>/<exp_id>/branches/graph-v1/strategy.py
-causal-edge research run --workdir research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
+python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
 # iterate...
 ```
 
-`causal-edge research run` handles validation, K computation, keep/discard decision, and round recording.
-You only write strategy.py and decide WHAT to try next.
+`causal-edge evaluate` handles raw validation facts. `Abel-alpha` handles keep/discard,
+round recording, and session/branch summaries. You only write strategy.py and decide WHAT to try next.
 
 ## Session Structure
 
 1. One exploration session lives at `research/<ticker>/<exp_id>/`.
 2. One session can branch into multiple candidate branches under `branches/<branch-id>/`.
-3. One `causal-edge research run` equals one recorded round and must produce both `results.tsv` and `rounds/round-xxx.md`.
+3. One `run-branch` call equals one recorded round and stores raw edge facts plus alpha-owned narrative records.
 4. The session also appends `events.tsv` so branch creation and round execution stay traceable.
-5. `causal-edge research check` defaults to traceability checks; `--strict` adds narrative completeness checks.
+5. `Abel-alpha check --strict` verifies narrative completeness.
 
 ## The KEEP Rule
 
 ```
-KEEP if: causal-edge verdict == "PASS" AND triangle improved vs latest KEEP baseline
+KEEP if: causal-edge verdict == "PASS" AND key baseline metrics improve vs latest KEEP baseline
 DISCARD: everything else
 ```
 
