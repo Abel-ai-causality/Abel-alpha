@@ -35,6 +35,7 @@ Default to causal-first research. Correlation-derived signals are allowed as sup
 ## Judgment Calls (only you can make these)
 
 - **Explore vs exploit?** New data dimension = explore. Parameter tweak = exploit. Swapping ML framework = exploit. See `references/experiment-loop.md`.
+- **Discovery priority?** Keep exploration open, but default to direct parents first. Inside the Markov blanket, prioritize parents over children, and children over spouses/co-parents. Treat crypto peers as low-priority supplements. See `references/discovery-protocol.md`.
 - **Micro-cap parents look weird?** That's the signal. Causal info transmits from low-attention assets. Abel's graph is mostly micro-caps by design.
 - **Validation failure?** It's your next research direction, not an obstacle. DSR low = K too high. MaxDD bad = drawdown signal weak. Don't hack metrics — fix the signal. See `references/experiment-loop.md#addressing-validation-failures`.
 - **When to stop?** 20+ consecutive discards AND 3+ genuine explore dimensions tried = honest failure. Report it. Don't burn compute on noise.

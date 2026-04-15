@@ -13,10 +13,10 @@ Direct Abel parents are often not the best predictors. Multihop consistently out
 
 ```
 Direct parents:    Abel says X → TARGET
-Markov blanket:    co-parents, spouses (graph.markov_blanket)
+Markov blanket:    prioritize parents > children > spouses/co-parents
 Hop-2 parents:     X → CHILD → TARGET (via children's parents)
 Sector peers:      same industry as direct parents, liquid
-Crypto peers:      for crypto targets, check paths from BTC/ETH/BNB/etc.
+Crypto peers:      low-priority supplement for crypto targets
 ```
 
 Production proof:
@@ -29,10 +29,10 @@ Production proof:
 ## 5-Step Core
 
 1. **Parents** — `graph.neighbors(node, scope=parents)`
-2. **Blanket** — `extensions.abel.markov_blanket(node)` — includes co-parents
+2. **Blanket** — `extensions.abel.markov_blanket(node)` — within the blanket, prioritize parents first, then children, then spouses/co-parents
 3. **Children** — `graph.neighbors(node, scope=children)` — for hop-2 expansion
 4. **Multihop** — for each child ≠ target, get its parents. Add novel ones as hop-2
-5. **Crypto peers** — for crypto targets, check `graph.paths` from major crypto assets
+5. **Crypto peers** — for crypto targets, optionally check `graph.paths` from major crypto assets after higher-priority causal candidates
 
 K is auto-computed by `causal-edge research run` from strategy.py source.
 You don't need to track K manually.
@@ -41,14 +41,20 @@ You don't need to track K manually.
 
 - **Verify paths** — confirm causal transmission for top candidates
 - **Sector peers** — 2-3 same-sector liquid equities per direct parent
-- **Crypto peers** — asset-dependent. BNB: +8 crypto peers was #1 breakthrough. TON: crypto peers all failed OOS. Test, don't assume.
+- **Crypto peers** — low-priority, asset-dependent supplement. BNB: +8 crypto peers was #1 breakthrough. TON: crypto peers all failed OOS. Test, don't assume.
 
 ## Selection
 
-Rank candidates by `data_availability × causal_proximity`:
+Keep selection open-ended. Use priority order, not a rigid formula:
+- direct parents first
+- then Markov blanket nodes, with `parents > children > spouses/co-parents`
+- then hop-2 candidates
+- then sector peers
+- then crypto peers as a low-priority supplement
+
+`data_availability × causal_proximity` remains a useful heuristic inside each tier, not a hard global ranking rule:
 - `data_availability`: 1.0 daily, 0.5 weekly, 0 unavailable
 - `causal_proximity`: 1/hop_depth (direct=1.0, hop-2=0.5, hop-3=0.33)
-- `blanket_bonus`: +0.3 for Markov blanket nodes
 
 Select top 15-25 for equities, 15-20 for crypto.
 
