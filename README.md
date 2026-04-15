@@ -18,6 +18,8 @@ If that `git+https` install path fails in your network environment, use the same
 pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/main.zip
 ```
 
+If `causal-edge discover <TICKER>` reports a missing Abel key, install `causal-abel`, complete its OAuth flow, and rerun the same `discover` command. `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then `.agents/skills/causal-abel/.env.skill`, so agent-driven installs can reuse the `causal-abel` auth file without copying the key into each workspace.
+
 ```mermaid
 flowchart TD
     D["DISCOVER — Abel CAP parents + blanket"]

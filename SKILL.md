@@ -16,7 +16,7 @@ metadata:
 
 Causation survives regime change. Correlation doesn't.
 
-Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow.
+Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
