@@ -16,19 +16,19 @@ metadata:
 
 Causation survives regime change. Correlation doesn't.
 
-Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow.
+Main install entrypoint: install `Abel-edge` first, then use the `causal-edge` CLI. If live Abel discovery needs auth, install `causal-abel` and complete its OAuth flow. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-causal-edge init <name>               # creates workspace
-causal-edge discover <TICKER>         # runs Abel discovery
-causal-edge run                       # executes strategies
-causal-edge validate                  # validates and enforces quality gates
-causal-edge status                    # progress summary
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
+python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
+python scripts/research_narrative.py status --session research/<ticker>/<exp-id>
+python scripts/research_narrative.py check --session research/<ticker>/<exp-id> --strict
 ```
 
-The CLI enforces validation, look-ahead checks, and result recording.
-Your job: write the strategy implementation. The references have the method.
+`Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
+keep/discard, process records, and narrative summaries. Your job: write the strategy implementation.
 
 ## Judgment Calls (only you can make these)
 
@@ -45,12 +45,14 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 - Abel queries: parents + blanket + children are 3 independent API calls
 - Data fetching: each ticker's price history is independent
 - Multi-asset research: research SOL and TSLA simultaneously (separate workspaces)
+- Multi-branch research: one exploration session can branch into multiple candidate branches
 - Dashboard generation: each strategy's charts are independent
 - Backfill: multiple strategies can backfill concurrently
 
 **Sequential (dependent — compounding requires order):**
 - Experiment loop: exp002 depends on exp001's result. Serial, not parallel.
-- KEEP decision: validate THEN record. Cannot record before verdict.
+- KEEP decision: validate, compare vs baseline, THEN record. Cannot record before verdict.
+- Process record: use the Abel-alpha script to keep `events.tsv`, round notes, README, thesis, and memory in sync.
 
 **In practice:** use Agent tool to dispatch parallel research across assets. Within each asset, experiments are serial. `causal-edge` handles IO parallelism (discovery, dashboard) internally.
 
