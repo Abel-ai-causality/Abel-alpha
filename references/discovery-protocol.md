@@ -61,8 +61,9 @@ Select top 15-25 for equities, 15-20 for crypto.
 ## Fallback Without Abel
 
 If no API key: sector heuristics — liquid sector peers + market factors.
-Higher K, lower quality, but the experiment loop still works.
+Treat this as continuity mode, not equal evidence to Abel discovery. Higher K, lower quality, and lower confidence, but the experiment loop still works.
 SOL had zero Abel coverage; fallback crypto peer voting still produced Sharpe 2.06 (13/13 PASS).
+Report fallback outcomes as heuristic discoveries, not as Abel-equivalent causal discoveries.
 
 ## Caching
 

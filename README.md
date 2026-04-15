@@ -64,6 +64,8 @@ Correlation breaks more easily when regimes change. Causation is the default sea
 
 Correlation-derived signals are allowed, but only as a second-class supplement to a causal thesis. They must earn their place empirically and should not replace Abel-driven discovery as the default search process.
 
+Without Abel, fallback discovery is still useful for research continuity, but it carries weaker discovery evidence: K is effectively higher, confidence is lower, and results should not be described as equivalent to Abel-led causal discovery.
+
 ## Production Proof
 
 | | Sharpe | Validation | Backtest |

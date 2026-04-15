@@ -32,3 +32,6 @@ new relationships. 100 "explore" that only subtracted → 0 keeps.
 
 **C4. Causal-first, correlation-allowed.**
 Use Abel-discovered causal structure as the default search prior because it reduces K and is more likely to survive regime change. Correlation-derived signals can still be valid, but they should enter as supplements, not replacements: require orthogonality to the causal core and stronger empirical scrutiny before promoting them.
+
+**C5. Fallback is continuity mode, not equal discovery evidence.**
+If Abel is unavailable, heuristic discovery can keep the research loop moving and may still produce tradeable strategies. But the discovery prior is weaker: K is higher in spirit, confidence should be downgraded, and outcomes are not directly comparable to Abel-led causal discovery claims.
