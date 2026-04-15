@@ -53,7 +53,9 @@ Fix through signal improvement, not metric manipulation.
 
 ## When to Stop
 
-- **20+ consecutive discards** AND **3+ genuine explore dimensions tried** = honest failure.
+- **20+ consecutive discards** AND **3+ genuine explore dimensions tried** is the minimum threshold, not an automatic stop.
+- Declare honest failure only when that threshold is met **and** the last 5 rounds show no material validation improvement **and** no new high-quality discovery lead remains.
+- Repeating the same failure signature across recent rounds is evidence of exhaustion. A branch that is still improving but not yet KEEP is not exhausted.
 - An honest "no signal" is a valid outcome. Don't burn compute on noise.
 - "Pareto frontier reached" after 6 experiments is NOT honest failure (too few).
 
