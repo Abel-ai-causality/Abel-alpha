@@ -211,7 +211,28 @@ def init_session_dir(
 
 
 def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
+    try:
+        from causal_edge.plugins.abel.credentials import (
+            MissingAbelApiKeyError,
+            require_api_key,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "Live Abel discovery requires causal-edge with the Abel plugin installed. "
+            "Create a virtual environment, install causal-edge, then retry."
+        ) from exc
+
     from causal_edge.plugins.abel.discover import discover_graph_nodes
+
+    try:
+        require_api_key()
+    except MissingAbelApiKeyError as exc:
+        raise RuntimeError(
+            "init-session --discover requires Abel auth before live discovery. "
+            "Run `causal-edge login`, or install `causal-abel` and complete its OAuth flow, "
+            "then retry `python scripts/research_narrative.py init-session --ticker "
+            f"{ticker.upper()} --exp-id <exp-id> --discover`."
+        ) from exc
 
     parents_output = discover_graph_nodes(ticker.upper(), mode="parents", limit=limit)
     blanket_output = discover_graph_nodes(ticker.upper(), mode="mb", limit=limit)
