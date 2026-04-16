@@ -229,7 +229,7 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
     except MissingAbelApiKeyError as exc:
         raise RuntimeError(
             "init-session --discover requires Abel auth before live discovery. "
-            "Run `causal-edge login`, or install `causal-abel` and complete its OAuth flow, "
+            "Install `causal-abel` from `https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills` and complete its OAuth flow, or run `causal-edge login` for the standalone fallback, "
             "then retry `python scripts/research_narrative.py init-session --ticker "
             f"{ticker.upper()} --exp-id <exp-id> --discover`."
         ) from exc

@@ -16,7 +16,7 @@ metadata:
 
 Causation is the default prior because it survives regime change more often than correlation.
 
-Main install entrypoint: create and activate a virtual environment, install `Abel-edge`, then use the `causal-edge` CLI. If live Abel discovery needs auth, complete `causal-edge login` or install `causal-abel` and finish its OAuth flow before running `init-session --discover`. After OAuth, `causal-edge` should reuse the local `causal-abel` auth file automatically; if it still reports a missing key, check `python .agents/skills/causal-abel/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
+Main install entrypoint: create and activate a virtual environment, install `Abel-edge`, then use the `causal-edge` CLI. `Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its OAuth flow, and let `causal-edge` reuse that shared auth before falling back to `causal-edge login`. If it still reports a missing key, check `python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
 python -m venv .venv
@@ -25,7 +25,9 @@ python -m venv .venv
 python -m pip install --upgrade pip
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
 python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
-causal-edge login  # or causal-abel OAuth before live discovery
+npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
+# use -g for a global install in the current agent platform
+# then complete causal-abel OAuth once and let causal-edge reuse it
 python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover
 python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
@@ -77,7 +79,7 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 | Feature patterns from 200+ experiments | `references/proven-patterns.md` |
 | Why causal works (Pearl, DGP, axioms) | `references/methodology.md` |
 
-**REQUIRED SKILL:** `causal-abel` for Abel API access (cap_probe.py, auth flow).
+**REQUIRED SKILL:** `causal-abel` for Abel API access (cap_probe.py, auth flow). Install it from `https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills`.
 
 ## Abel-Pro Mapping
 
