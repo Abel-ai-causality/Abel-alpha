@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```bash
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 python scripts/research_narrative.py init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
 # edit research/<ticker>/<exp_id>/branches/graph-v1/strategy.py
 python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
@@ -20,6 +20,7 @@ round recording, and session/branch summaries. You only write strategy.py and de
 3. One `run-branch` call equals one recorded round and stores raw edge facts plus alpha-owned narrative records.
 4. The session also appends `events.tsv` so branch creation and round execution stay traceable.
 5. `Abel-alpha check --strict` verifies narrative completeness.
+6. The session fixes one backtest start date that every branch round passes through to `causal-edge evaluate`.
 
 ## The KEEP Rule
 

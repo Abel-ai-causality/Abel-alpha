@@ -1,0 +1,81 @@
+{
+  "ticker": "AVGO",
+  "source": "abel_live_cap_probe",
+  "parents": [
+    {
+      "ticker": "AVAUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "CALIUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "CXT",
+      "field": "price"
+    },
+    {
+      "ticker": "EURTUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "GMEXUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "MEANUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "OUSDUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PERUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PLKRUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PSQH",
+      "field": "price"
+    }
+  ],
+  "blanket_new": [
+    {
+      "ticker": "DFYNUSD",
+      "field": "price",
+      "roles": [
+        "spouse"
+      ]
+    },
+    {
+      "ticker": "ECCX",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "GBLI",
+      "field": "price",
+      "roles": [
+        "spouse"
+      ]
+    }
+  ],
+  "children": [
+    {
+      "ticker": "DHVUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "EQUALUSD",
+      "field": "price"
+    }
+  ],
+  "K_discovery": 10,
+  "created_at": "2026-04-15T13:30:00.699108Z"
+}

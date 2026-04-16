@@ -1,0 +1,6 @@
+timestamp	event	branch_id	round_id	mode	verdict	decision	description	artifact_path
+2026-04-15T13:27:33.365556+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T13:30:43.544955+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T14:13:39.005237+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T14:13:45.468816+00:00	branch_created	graph-v1					Initialized Abel-alpha branch	
+2026-04-15T14:15:10.279534+00:00	round_recorded	graph-v1	round-001	explore	PASS	keep	baseline fallback graph vote after Abel CAP 404	branches\graph-v1\outputs\round-001-edge-result.json

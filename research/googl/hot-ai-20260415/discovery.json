@@ -1,0 +1,72 @@
+{
+  "ticker": "GOOGL",
+  "source": "abel_live_cap_probe",
+  "parents": [
+    {
+      "ticker": "BOGUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "BTTUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "CALIUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "DHNUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "FCTRUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PAXGUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PAXUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "PRIMEUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "RENBTCUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "XIDRUSD",
+      "field": "price"
+    }
+  ],
+  "blanket_new": [
+    {
+      "ticker": "BUMPUSD",
+      "field": "price",
+      "roles": [
+        "spouse"
+      ]
+    },
+    {
+      "ticker": "GP",
+      "field": "price",
+      "roles": [
+        "spouse"
+      ]
+    },
+    {
+      "ticker": "MONAUSD",
+      "field": "price",
+      "roles": [
+        "spouse"
+      ]
+    }
+  ],
+  "children": [],
+  "K_discovery": 10,
+  "created_at": "2026-04-15T13:29:40.151489Z"
+}
