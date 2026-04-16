@@ -1,0 +1,120 @@
+{
+  "ticker": "INTC",
+  "source": "abel_live_cap_probe",
+  "parents": [
+    {
+      "ticker": "CXT",
+      "field": "price"
+    },
+    {
+      "ticker": "GUARDUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "ISAUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "SBDUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "SFIUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "STSOLUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "TRCLUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "ULXUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "UNWUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "UW3SUSD",
+      "field": "price"
+    }
+  ],
+  "blanket_new": [
+    {
+      "ticker": "BSTYUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "DUBBZUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "HWCPZ",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "IDAI",
+      "field": "price",
+      "roles": [
+        "parent",
+        "spouse"
+      ]
+    },
+    {
+      "ticker": "IXSUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "LSDUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "MCRNUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "MMFUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "MOGUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    }
+  ],
+  "children": [
+    {
+      "ticker": "COREUSD",
+      "field": "price"
+    }
+  ],
+  "K_discovery": 10,
+  "created_at": "2026-04-15T13:32:12.127098Z"
+}

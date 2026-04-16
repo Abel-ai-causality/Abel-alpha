@@ -1,0 +1,102 @@
+{
+  "ticker": "ORCL",
+  "source": "abel_live_cap_probe",
+  "parents": [
+    {
+      "ticker": "ABTS",
+      "field": "price"
+    },
+    {
+      "ticker": "CXT",
+      "field": "price"
+    },
+    {
+      "ticker": "GP",
+      "field": "price"
+    },
+    {
+      "ticker": "HDB",
+      "field": "price"
+    },
+    {
+      "ticker": "HNSTUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "MMYUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "NTUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "RETO",
+      "field": "price"
+    },
+    {
+      "ticker": "SFIUSD",
+      "field": "price"
+    },
+    {
+      "ticker": "XPXUSD",
+      "field": "price"
+    }
+  ],
+  "blanket_new": [
+    {
+      "ticker": "ARTEMUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "ASTRADAOUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "EDENUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "KRDUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "KUKE",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    },
+    {
+      "ticker": "MEANUSD",
+      "field": "price",
+      "roles": [
+        "parent"
+      ]
+    }
+  ],
+  "children": [
+    {
+      "ticker": "CXT",
+      "field": "price"
+    },
+    {
+      "ticker": "MBPUSD",
+      "field": "price"
+    }
+  ],
+  "K_discovery": 10,
+  "created_at": "2026-04-15T13:31:10.906464Z"
+}

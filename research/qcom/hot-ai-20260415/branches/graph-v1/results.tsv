@@ -1,0 +1,2 @@
+exp_id	ticker	branch_id	round_id	decision	lo_adj	ic	omega	sharpe	max_dd	pnl	K	score	verdict	mode	description	result_path	report_path
+hot-ai-20260415	QCOM	graph-v1	round-001	keep	5.193	0.0000	2.250	4.907	-0.0497	158.8	1	7/7	PASS	explore	baseline discovery-driven graph vote	branches\graph-v1\outputs\round-001-edge-result.json	branches\graph-v1\outputs\round-001-edge-validation.md

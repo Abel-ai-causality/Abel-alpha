@@ -1,0 +1,9 @@
+timestamp	event	branch_id	round_id	mode	verdict	decision	description	artifact_path
+2026-04-15T13:21:52.288057+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T13:21:52.288572+00:00	discovery_recorded						Recorded live Abel discovery with K=2	discovery.json
+2026-04-15T13:23:32.672707+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T13:23:32.673231+00:00	discovery_recorded						Recorded live Abel discovery with K=2	discovery.json
+2026-04-15T13:27:33.143176+00:00	session_created						Initialized Abel-alpha narrative session	
+2026-04-15T13:29:12.681088Z	discovery_recorded						Recorded live Abel discovery via cap_probe with K=2	discovery.json
+2026-04-15T13:39:43.229547+00:00	branch_created	graph-v1					Initialized Abel-alpha branch	
+2026-04-15T13:49:10.523937+00:00	round_recorded	graph-v1	round-001	explore	PASS	keep	baseline discovery-driven graph vote	branches\graph-v1\outputs\round-001-edge-result.json

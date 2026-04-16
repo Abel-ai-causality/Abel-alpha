@@ -1,0 +1,57 @@
+{
+  "verdict": "PASS",
+  "score": "7/7",
+  "failures": [],
+  "warnings": [],
+  "metrics": {
+    "sharpe": 4.711893955329856,
+    "lo_adjusted": 4.450341209217648,
+    "sortino": 8.402858688467823,
+    "total_return": 1.6891804167524773,
+    "max_dd": -0.08097663127352439,
+    "calmar": 16.842244399940054,
+    "dsr": 1.0,
+    "dsr_trials_used": 1,
+    "loss_years": 0,
+    "loss_years_applicable": true,
+    "full_years_count": 1,
+    "drawdown_time_frac": 0.6595238095238095,
+    "max_drawdown_duration_bars": 87,
+    "omega": 2.1124838290352193,
+    "omega_applicable": true,
+    "skew": 0.028491864944573828,
+    "sharpe_lo_ratio": 1.0587713916340782,
+    "bootstrap_p": 0.0,
+    "position_ic": 0.0,
+    "position_hit_rate": 0.0,
+    "position_ic_stability": 0.0,
+    "position_ic_monthly_mean": 0.0,
+    "position_ic_applicable": false,
+    "position_ic_stability_applicable": false,
+    "active_days": 207,
+    "total_days": 420,
+    "yearly_sharpes": {
+      "2024": 5.010272900524033,
+      "2025": 2.754256685446937
+    },
+    "yearly_pnl": {
+      "2024": 1.4924548852920427,
+      "2025": 0.07892842218381202
+    }
+  },
+  "triangle": {
+    "ratio": 4.450341209217648,
+    "rank": 0.0,
+    "shape": 2.1124838290352193
+  },
+  "profile": "crypto_daily",
+  "K": 1,
+  "K_detail": {
+    "tickers": [
+      "D"
+    ],
+    "lags": [],
+    "n_tickers": 1,
+    "n_lags": 0
+  }
+}

@@ -24,11 +24,11 @@ python -m venv .venv
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
 # use -g for a global install in the current agent platform
 # then complete causal-abel OAuth once and let causal-edge reuse it
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover
+python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover --backtest-start 2020-01-01
 python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 python scripts/research_narrative.py status --session research/<ticker>/<exp-id>
