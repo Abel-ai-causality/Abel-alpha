@@ -13,7 +13,7 @@ Abel gives ~10 justified parents vs ~10,000 blind scan. Same signal at Sharpe 1.
 causal DSR=97%, blind DSR=41%. Follows from Pearl + DSR formula.
 
 **A2. Look-ahead = invalid backtest.**
-Future data in features = backtest is lying. See `references/constraints.md` for 8 rules.
+Future data in features = backtest is lying. See `references/constraints.md` for the structural strategy rules.
 
 ## Constraints (empirical — questionable with evidence)
 

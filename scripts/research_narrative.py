@@ -50,7 +50,10 @@ RESULTS_HEADER = [
     "report_path",
 ]
 
-STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy()."""
+STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
+
+Final strategy output must satisfy abs(position) <= 1.
+"""
 
 import numpy as np
 import pandas as pd

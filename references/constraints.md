@@ -43,9 +43,14 @@ regardless of how much Sharpe improves. These rules are non-negotiable.
    - `rolling_vol.shift(1)` ✓
    - `rolling_vol` (includes today's vol) ✗
 
+8. **Strategy output must satisfy `abs(position) <= 1`**
+   - `np.clip(position, -1.0, 1.0)` ✓
+   - `position = 1.4 * base_signal` without a final cap ✗
+   - This is a structural leverage constraint on the final position series, not a suggestion.
+
 ## Target Variable Rules
 
-8. **Only `shift(-1)` or `shift(-H)` for targets (predicting future)**
+9. **Only `shift(-1)` or `shift(-H)` for targets (predicting future)**
    - `(ret.shift(-1) > 0)` ✓ for H=1 target
    - These are prediction targets, not features
 
@@ -55,9 +60,9 @@ regardless of how much Sharpe improves. These rules are non-negotiable.
 Common patterns are caught automatically. But this is not exhaustive —
 you must also manually verify any new feature engineering is lag-safe.
 
-## Component PnL is Dangerous (Rule 9)
+## Component PnL is Dangerous (Rule 10)
 
-9. **Never use same-day component PnL as a signal**
+10. **Never use same-day component PnL as a signal**
    - `comp_pnls["S2"][T] = s2_pos[T] × eth_ret[T]` — contains TODAY's return
    - `sign(comp_pnls["S2"][T])` leaks today's return direction
    - Fix: use `np.roll(comp_pnl, 1)` to shift by 1 day, or use component POSITIONS instead

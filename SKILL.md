@@ -75,7 +75,7 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 |---|---|
 | Experiment loop, explore/exploit, KEEP rule | `references/experiment-loop.md` |
 | Discovery protocol, multihop, blanket | `references/discovery-protocol.md` |
-| Look-ahead rules (8 constraints) | `references/constraints.md` |
+| Structural strategy constraints | `references/constraints.md` |
 | Feature patterns from 200+ experiments | `references/proven-patterns.md` |
 | Why causal works (Pearl, DGP, axioms) | `references/methodology.md` |
 
