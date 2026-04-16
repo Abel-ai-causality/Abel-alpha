@@ -984,6 +984,7 @@ def render_round_note(**kwargs) -> str:
 - score: `{result.get("score", "?/?")}`
 - verdict: `{result.get("verdict", "ERROR")}`
 - requested_start: `{requested_window.get("start", kwargs.get("backtest_start", DEFAULT_BACKTEST_START))}`
+- requested_end: `{requested_window.get("end") or "latest"}`
 - effective_window: `{effective_window.get("start", "unknown")} -> {effective_window.get("end", "unknown")}`
 
 ## Goal

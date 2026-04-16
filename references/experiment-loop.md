@@ -21,6 +21,7 @@ round recording, and session/branch summaries. You only write strategy.py and de
 4. The session also appends `events.tsv` so branch creation and round execution stay traceable.
 5. `Abel-alpha check --strict` verifies narrative completeness.
 6. The session fixes one backtest start date that every branch round passes through to `causal-edge evaluate`.
+7. Branch rounds leave backtest `end` unset so each run evaluates on the latest available data at execution time.
 
 ## The KEEP Rule
 

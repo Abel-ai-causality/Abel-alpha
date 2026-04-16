@@ -38,6 +38,7 @@ python scripts/research_narrative.py check --session research/<ticker>/<exp-id> 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
 when you want the live Abel discovery persisted into `discovery.json` and the event trail.
+The session fixes one backtest `start`; `run-branch` leaves `end` unset so each run evaluates on the latest available data.
 Your job: write the strategy implementation.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
