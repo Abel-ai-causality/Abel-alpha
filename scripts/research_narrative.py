@@ -55,6 +55,7 @@ RESULTS_HEADER = [
 STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
 
 Final strategy output must satisfy abs(position) <= 1.
+Default backtest behavior should use the provided start date and treat end=None as the latest available date.
 """
 
 import numpy as np
