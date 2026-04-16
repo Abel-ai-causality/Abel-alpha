@@ -27,21 +27,25 @@ regardless of how much Sharpe improves. These rules are non-negotiable.
    - `s2_pos_arr[:i]` ✓
    - `s2_pos_arr[:i+1]` ✗ (includes current day)
 
+5. **Normalize datetime semantics before aligning external series**
+   - If strategy dates are UTC-aware, normalize auxiliary series to the same semantics before `reindex(...)`
+   - Do not mix naive and UTC-aware indexes in date comparisons or alignment steps
+
 ## Trend Filter Rules
 
-5. **Use yesterday's price and MA for today's decision**
+6. **Use yesterday's price and MA for today's decision**
    - `if eth_prices[i-1] < ma_vals[i-1]: pos[i] = 0` ✓
    - `if eth_prices[i] < ma_vals[i]: pos[i] = 0` ✗
 
 ## Position Sizing Rules
 
-6. **Vol-targeting must use shifted rolling vol**
+7. **Vol-targeting must use shifted rolling vol**
    - `rolling_vol.shift(1)` ✓
    - `rolling_vol` (includes today's vol) ✗
 
 ## Target Variable Rules
 
-7. **Only `shift(-1)` or `shift(-H)` for targets (predicting future)**
+8. **Only `shift(-1)` or `shift(-H)` for targets (predicting future)**
    - `(ret.shift(-1) > 0)` ✓ for H=1 target
    - These are prediction targets, not features
 
@@ -51,9 +55,9 @@ regardless of how much Sharpe improves. These rules are non-negotiable.
 Common patterns are caught automatically. But this is not exhaustive —
 you must also manually verify any new feature engineering is lag-safe.
 
-## Component PnL is Dangerous (Rule 8)
+## Component PnL is Dangerous (Rule 9)
 
-8. **Never use same-day component PnL as a signal**
+9. **Never use same-day component PnL as a signal**
    - `comp_pnls["S2"][T] = s2_pos[T] × eth_ret[T]` — contains TODAY's return
    - `sign(comp_pnls["S2"][T])` leaks today's return direction
    - Fix: use `np.roll(comp_pnl, 1)` to shift by 1 day, or use component POSITIONS instead
