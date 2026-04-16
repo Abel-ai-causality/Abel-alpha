@@ -117,7 +117,7 @@ SKILL.md                  ← Agent reads this. 280 words. 4 judgment calls.
 references/
   experiment-loop.md      ← KEEP rule, explore/exploit, when to stop
   discovery-protocol.md   ← Multihop, blanket, fallback
-  constraints.md          ← Look-ahead rules (8 constraints)
+  constraints.md          ← Structural strategy constraints
   proven-patterns.md      ← Battle evidence for inspiration
   methodology.md          ← Axioms vs constraints
 ```

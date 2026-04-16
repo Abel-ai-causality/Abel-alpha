@@ -46,6 +46,8 @@ still rose but IC collapsed 29% — the metric triangle caught concentration gam
 **When**: SSTK→ETH xcorr multiplier in Dual Resonance. Validated through full scaling
 sweep (1.25→2.0 step 0.25). Optimal: UP=1.75, DOWN=0.25.
 
+Apply this as an internal multiplier, then cap the final strategy output so `abs(position) <= 1`.
+
 | Scale Up/Down | Lo   | IC    | Verdict              |
 |---------------|------|-------|----------------------|
 | 1.50 / 0.50   | 2.35 | 0.549 | Strong               |
@@ -125,7 +127,8 @@ collapsing Sharpe below threshold.
 
 **Failure modes**: RSI as an ML feature is noise. RSI as a position overlay is signal.
 This distinction was confirmed in BNB research: adding RSI as a feature degraded Sharpe
-by 8%; using it as an overlay improved Lo. Do not conflate the two uses.
+by 8%; using it as an overlay improved Lo. Do not conflate the two uses. After the
+overlay, cap the final position so `abs(position) <= 1`.
 
 **Look-ahead traps**:
 - `compute_rsi(close, period=20).shift(1)` — RSI at index `i` already incorporates

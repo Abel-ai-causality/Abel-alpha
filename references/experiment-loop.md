@@ -56,7 +56,7 @@ Fix through signal improvement, not metric manipulation.
 | T7 PBO high | Parameter selection overfits | Fewer params, wider WF window, fix lags |
 | T12 OOS/IS low | IS inflated | More conservative IS selection |
 | T13 NegRoll high | Regime-fragile | Add regime detection, diversify components |
-| T15 MaxDD | Drawdown risk | Better risk signal, vol-scaling (NOT position cap) |
+| T15 MaxDD | Drawdown risk | Better risk signal, vol-scaling, and still keep final `abs(position) <= 1` (do not rely on tighter caps as the main fix) |
 | T15 Lo low | Serial correlation | Persistence penalty, RSI contrarian |
 | T15 Omega low | Negative skew | Better entry/exit, NOT return clipping |
 
