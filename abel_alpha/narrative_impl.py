@@ -122,14 +122,19 @@ def main() -> int:
         help="Local Abel-alpha source tree used for installation",
     )
     env_init.add_argument(
+        "--edge-spec",
+        default=None,
+        help="Pip-installable Abel-edge target (defaults to the workspace GitHub main spec)",
+    )
+    env_init.add_argument(
         "--edge-source",
         default=None,
-        help="Optional local Abel-edge source tree used for installation",
+        help="Optional local Abel-edge source tree override for development",
     )
     env_init.add_argument(
         "--no-editable",
         action="store_true",
-        help="Install local source trees in regular mode instead of editable mode",
+        help="Install Abel-alpha from local source in regular mode instead of editable mode",
     )
 
     doctor = sub.add_parser("doctor", help="Check workspace readiness")
@@ -268,15 +273,17 @@ def handle_env_command(args: argparse.Namespace) -> int:
         start=Path(args.path).expanduser(),
         base_python=args.base_python,
         alpha_source=args.alpha_source,
+        edge_spec=args.edge_spec,
         edge_source=args.edge_source,
-        editable=not args.no_editable,
+        alpha_editable=not args.no_editable,
     )
     print(f"Workspace environment ready at {result.workspace_root}")
     print(f"  venv: {result.venv_path}")
     print(f"  python: {result.python_path}")
     print(f"  alpha_source: {result.alpha_source}")
-    print(f"  edge_source: {result.edge_source or 'package dependency'}")
-    print(f"  install_mode: {'editable' if result.editable else 'regular'}")
+    print(f"  edge_install_mode: {result.edge_install_mode}")
+    print(f"  edge_install_target: {result.edge_install_target}")
+    print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
     print("")
     print("Next:")
     print("  abel-alpha doctor")

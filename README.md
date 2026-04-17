@@ -23,10 +23,12 @@ abel-alpha check --session research/tsla/tsla-v1 --strict
 `abel-alpha workspace init` creates the standard workspace scaffold and manifest.
 The package install still happens from the `Abel-alpha` source checkout; the
 workspace is where research artifacts live. `abel-alpha env init` prepares the
-workspace `.venv`, installs `Abel-alpha`, prefers a local `Abel-edge` source
-tree when one is available, and gives `doctor` a stable target to inspect.
-Inside a workspace, `abel-alpha init-session` defaults to the manifest-backed
-`research/` root instead of relying on an implicit current-directory layout.
+workspace `.venv`, installs `Abel-alpha`, and installs `Abel-edge` from
+GitHub `main` by default until formal releases exist. Use `--edge-source` only
+for local development overrides. `doctor` then inspects the workspace against
+that configured target. Inside a workspace, `abel-alpha init-session` defaults
+to the manifest-backed `research/` root instead of relying on an implicit
+current-directory layout.
 
 The legacy `python scripts/research_narrative.py ...` entrypoint remains available as a compatibility path while the packaged CLI becomes the default.
 

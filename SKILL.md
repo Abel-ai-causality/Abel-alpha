@@ -43,7 +43,8 @@ abel-alpha check --session research/<ticker>/<exp-id> --strict
 `abel-alpha workspace init` creates the standard scaffold and manifest. Install
 the package from the `Abel-alpha` source checkout first, then use the workspace
 for research artifacts. `abel-alpha env init` prepares the workspace `.venv`
-and prefers a local `Abel-edge` source tree when one is available. Inside a
+and installs `Abel-edge` from GitHub `main` by default until formal releases
+exist. Use `--edge-source` only for local development overrides. Inside a
 workspace, `abel-alpha init-session` will default to the configured
 `research_root` instead of guessing from the current directory layout.
 

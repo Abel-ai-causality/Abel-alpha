@@ -9,6 +9,7 @@ from pathlib import Path
 from abel_alpha.workspace import (
     find_workspace_root,
     load_workspace_manifest,
+    resolve_edge_spec,
     resolve_runtime_python,
 )
 
@@ -64,6 +65,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     result: dict[str, object] = {
         "workspace_root": str(root),
         "python_path": str(python_path),
+        "edge_install_target": resolve_edge_spec(root, manifest),
         "checks": checks,
     }
 
@@ -223,6 +225,9 @@ def render_doctor_report(result: dict[str, object]) -> str:
     python_path = result.get("python_path")
     if python_path:
         lines.append(f"Python path: {python_path}")
+    edge_install_target = result.get("edge_install_target")
+    if edge_install_target:
+        lines.append(f"Edge install target: {edge_install_target}")
     lines.append("Checks:")
     checks = result.get("checks", {})
     if isinstance(checks, dict):
