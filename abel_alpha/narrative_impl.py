@@ -1175,7 +1175,7 @@ def check_session(session: Path, *, strict: bool) -> int:
                 branch_dir / "memory.md",
             ):
                 text = text_path.read_text(encoding="utf-8")
-                if "not recorded" in text or "Fill in" in text:
+                if "Fill in" in text or "{{" in text or "}}" in text:
                     failures.append(
                         f"{branch_dir.name}: unresolved placeholder in {text_path.name}"
                     )
