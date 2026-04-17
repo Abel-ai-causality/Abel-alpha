@@ -41,6 +41,10 @@ Treat this as the standard path for both humans and agents:
 5. If auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`.
 6. Only after the workspace is diagnosably ready, start `init-session`, `init-branch`, and `run-branch`.
 
+If `Abel-alpha` was installed as a skill from GitHub, the installed skill
+directory itself is the local source checkout. Run `pip install -e .` from that
+directory to expose the packaged `abel-alpha` CLI before creating a workspace.
+
 `abel-alpha doctor` is the default readiness gate:
 
 - `ready`: workspace, edge, and auth are ready

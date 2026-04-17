@@ -28,6 +28,10 @@ overrides:
 5. if auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`
 6. only after `doctor` is satisfactory, start `init-session`, `init-branch`, and `run-branch`
 
+If this skill was installed from GitHub into a local skills directory, treat
+that installed skill directory as the local `Abel-alpha` source checkout. Run
+`pip install -e .` from that directory before creating a research workspace.
+
 `Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs
 auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its
 OAuth flow, and let `causal-edge` reuse that shared auth before falling back to
@@ -64,6 +68,10 @@ and installs `Abel-edge` from GitHub `main` by default until formal releases
 exist. Use `--edge-source` only for local development overrides. Inside a
 workspace, `abel-alpha init-session` resolves the configured `research_root`
 instead of guessing from the current directory layout.
+
+For skill installs, "local source checkout" means the installed skill folder
+itself. The intended first step after installation is still `pip install -e .`
+from that directory so the packaged `abel-alpha` CLI becomes available.
 
 Treat `abel-alpha doctor` as the gate before research:
 

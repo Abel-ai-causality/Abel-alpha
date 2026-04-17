@@ -1,0 +1,7 @@
+interface:
+  display_name: "Abel Alpha"
+  short_description: "Workspace-first causal alpha research flow."
+  default_prompt: >
+    Use $causal-alpha to initialize an Abel-alpha research workspace, run
+    `env init` and `doctor`, resolve auth if needed, then create a session,
+    branch, and first research round through the packaged CLI.
