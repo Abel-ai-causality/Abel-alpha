@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from abel_alpha.edge_runtime import probe_edge_context_json, probe_edge_discovery_json
 from abel_alpha.workspace import (
     find_workspace_root,
     load_workspace_manifest,
@@ -211,39 +212,3 @@ def run_command(command: list[str], *, cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         rendered = " ".join(command)
         raise RuntimeError(f"Command failed with exit code {exc.returncode}: {rendered}") from exc
-
-
-def probe_edge_context_json(python_path: Path, cwd: Path) -> bool | None:
-    """Probe whether the installed edge supports the alpha context contract."""
-    completed = subprocess.run(
-        [
-            str(python_path),
-            "-c",
-            (
-                "import inspect\n"
-                "from causal_edge.research.evaluate import run_evaluation\n"
-                "print('context_json' in inspect.signature(run_evaluation).parameters)\n"
-            ),
-        ],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() == "True"
-
-
-def probe_edge_discovery_json(python_path: Path, cwd: Path) -> bool | None:
-    """Probe whether the installed edge discover CLI exposes --json."""
-    completed = subprocess.run(
-        [str(python_path), "-m", "causal_edge.cli", "discover", "--help"],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        return None
-    return "--json" in (completed.stdout or "")

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
+from abel_alpha.edge_runtime import probe_edge_context_json
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     build_default_manifest,
@@ -662,7 +663,23 @@ def run_branch_round(args: argparse.Namespace) -> int:
     else:
         context_mode = "recorded_only_legacy_edge"
     completed = subprocess.run(command, cwd=session, capture_output=True, text=True)
-    result = json.loads(result_path.read_text(encoding="utf-8"))
+    sys.stdout.write(completed.stdout)
+    sys.stderr.write(completed.stderr)
+    if not result_path.exists():
+        print(
+            "Abel-edge did not produce the expected result JSON. "
+            "Check the command output above and rerun after fixing the evaluation error.",
+            file=sys.stderr,
+        )
+        return completed.returncode or 1
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(
+            f"Abel-edge wrote an unreadable result JSON at {result_path}: {exc}",
+            file=sys.stderr,
+        )
+        return completed.returncode or 1
     decision = alpha_decision(rows, result)
 
     round_note = branch / "rounds" / f"{round_id}.md"
@@ -735,8 +752,6 @@ def run_branch_round(args: argparse.Namespace) -> int:
             },
         )
         render_session(session)
-    sys.stdout.write(completed.stdout)
-    sys.stderr.write(completed.stderr)
     if context_mode != "injected":
         print(
             "Warning: installed Abel-edge does not support --context-json yet; "
@@ -1295,22 +1310,7 @@ def load_discovery(session: Path) -> dict:
 
 
 def edge_supports_context_json(python_bin: str, cwd: Path) -> bool:
-    completed = subprocess.run(
-        [
-            python_bin,
-            "-c",
-            (
-                "import inspect\n"
-                "from causal_edge.research.evaluate import run_evaluation\n"
-                "print('context_json' in inspect.signature(run_evaluation).parameters)\n"
-            ),
-        ],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return completed.returncode == 0 and completed.stdout.strip() == "True"
+    return probe_edge_context_json(python_bin, cwd) is True
 
 
 def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:

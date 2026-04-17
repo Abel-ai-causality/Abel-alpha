@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
 
+from abel_alpha.edge_runtime import (
+    probe_abel_auth,
+    probe_causal_edge_cli,
+    probe_causal_edge_import,
+    probe_edge_context_json,
+    probe_edge_discovery_json,
+)
 from abel_alpha.workspace import (
     find_workspace_root,
     load_workspace_manifest,
@@ -88,19 +93,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         )
         return result
 
-    import_check = run_python_json(
-        python_path,
-        root,
-        """
-import json
-try:
-    import causal_edge  # noqa: F401
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": str(exc)}))
-else:
-    print(json.dumps({"ok": True}))
-""",
-    )
+    import_check = probe_causal_edge_import(python_path, root)
     checks["causal_edge_import"] = "pass" if import_check.get("ok") else "fail"
     if not import_check.get("ok"):
         result.update(
@@ -112,130 +105,16 @@ else:
         )
         return result
 
-    cli_check = run_python_json(
-        python_path,
-        root,
-        """
-import json
-import subprocess
-import sys
-
-completed = subprocess.run(
-    [sys.executable, "-m", "causal_edge.cli", "version"],
-    capture_output=True,
-    text=True,
-)
-print(json.dumps({
-    "ok": completed.returncode == 0,
-    "stdout": completed.stdout.strip(),
-    "stderr": completed.stderr.strip(),
-}))
-""",
-    )
+    cli_check = probe_causal_edge_cli(python_path, root)
     checks["causal_edge_cli"] = "pass" if cli_check.get("ok") else "fail"
 
-    discovery_contract_check = run_python_json(
-        python_path,
-        root,
-        """
-import json
-import subprocess
-import sys
+    discovery_contract_ok = probe_edge_discovery_json(python_path, root)
+    checks["edge_discovery_json"] = "pass" if discovery_contract_ok else "fail"
 
-completed = subprocess.run(
-    [sys.executable, "-m", "causal_edge.cli", "discover", "--help"],
-    capture_output=True,
-    text=True,
-)
-stdout = completed.stdout or ""
-print(json.dumps({
-    "ok": completed.returncode == 0 and "--json" in stdout,
-}))
-""",
-    )
-    checks["edge_discovery_json"] = (
-        "pass" if discovery_contract_check.get("ok") else "fail"
-    )
+    context_contract_ok = probe_edge_context_json(python_path, root)
+    checks["edge_context_json"] = "pass" if context_contract_ok else "fail"
 
-    context_contract_check = run_python_json(
-        python_path,
-        root,
-        """
-import inspect
-import json
-
-from causal_edge.research.evaluate import run_evaluation
-
-print(json.dumps({
-    "ok": "context_json" in inspect.signature(run_evaluation).parameters,
-}))
-""",
-    )
-    checks["edge_context_json"] = (
-        "pass" if context_contract_check.get("ok") else "fail"
-    )
-
-    auth_check = run_python_json(
-        python_path,
-        root,
-        """
-import json
-import os
-from pathlib import Path
-
-from causal_edge.plugins.abel.credentials import (
-    _candidate_shared_auth_files,
-    _read_env_file,
-    normalize_api_key,
-)
-
-env_path = Path(".env").resolve()
-env_values = _read_env_file(env_path)
-
-env_token = normalize_api_key(
-    os.getenv("ABEL_API_KEY")
-    or os.getenv("CAP_API_KEY")
-)
-if env_token:
-    print(json.dumps({
-        "ok": True,
-        "source": "env_var",
-        "path": None,
-    }))
-    raise SystemExit(0)
-
-project_token = normalize_api_key(
-    env_values.get("ABEL_API_KEY")
-    or env_values.get("CAP_API_KEY")
-)
-if project_token:
-    print(json.dumps({
-        "ok": True,
-        "source": "workspace_env",
-        "path": str(env_path),
-    }))
-    raise SystemExit(0)
-
-for candidate in _candidate_shared_auth_files(env_path=env_path):
-    candidate_values = _read_env_file(candidate)
-    shared_token = normalize_api_key(
-        candidate_values.get("ABEL_API_KEY") or candidate_values.get("CAP_API_KEY")
-    )
-    if shared_token:
-        print(json.dumps({
-            "ok": True,
-            "source": "shared_auth_file",
-            "path": str(candidate),
-        }))
-        raise SystemExit(0)
-
-print(json.dumps({
-    "ok": False,
-    "source": "missing",
-    "path": None,
-}))
-""",
-    )
+    auth_check = probe_abel_auth(python_path, root)
     checks["auth"] = "pass" if auth_check.get("ok") else "fail"
     checks["edge_login_fallback"] = "pass" if checks["causal_edge_cli"] == "pass" else "fail"
     result["auth"] = auth_check
@@ -246,12 +125,12 @@ print(json.dumps({
             {
                 "status": (
                     "auth_missing"
-                    if checks["edge_context_json"] == "pass"
+                    if context_contract_ok
                     else "auth_missing_legacy_edge"
                 ),
                 "summary": (
                     "Workspace environment is ready, but Abel auth was not detected."
-                    if checks["edge_context_json"] == "pass"
+                    if context_contract_ok
                     else "Workspace environment is ready, but Abel auth is missing and the installed "
                     "Abel-edge does not yet support the alpha context contract."
                 ),
@@ -263,7 +142,7 @@ print(json.dumps({
         )
         return result
 
-    if checks["edge_context_json"] == "pass":
+    if context_contract_ok:
         result.update(
             {
                 "status": "ready",
@@ -346,26 +225,3 @@ def render_doctor_report(result: dict[str, object]) -> str:
         lines.append(f"Auth scope: {auth_scope}")
     lines.append(f"Next step: {result.get('next_step', '')}")
     return "\n".join(lines)
-
-
-def run_python_json(python_path: Path, cwd: Path, script: str) -> dict[str, object]:
-    """Run an inline Python script and parse a JSON payload from stdout."""
-    completed = subprocess.run(
-        [str(python_path), "-c", script],
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        return {
-            "ok": False,
-            "error": completed.stderr.strip() or completed.stdout.strip() or "command failed",
-        }
-    payload = completed.stdout.strip()
-    if not payload:
-        return {"ok": False, "error": "no output"}
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
-        return {"ok": False, "error": f"invalid JSON output: {exc}", "stdout": payload}

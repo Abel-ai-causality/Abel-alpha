@@ -69,19 +69,17 @@ exist. Use `--edge-source` only for local development overrides. Inside a
 workspace, `abel-alpha init-session` resolves the configured `research_root`
 instead of guessing from the current directory layout.
 
-For skill installs, "local source checkout" means the installed skill folder
-itself. The intended first step after installation is still `pip install -e .`
-from that directory so the packaged `abel-alpha` CLI becomes available.
-
 Treat `abel-alpha doctor` as the gate before research:
 
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: install or authorize `causal-abel`, then rerun `doctor`
-- `ready_legacy_edge` or `auth_missing_legacy_edge`: edge is usable but too old
-  for some newer contracts such as structured discovery or full
-  `run_strategy(context=...)` injection
 - `env_missing` or `edge_missing`: repair the workspace runtime with
   `abel-alpha env init`
+
+If you intentionally point a workspace at an older custom `Abel-edge`,
+`doctor` may report `ready_legacy_edge` or `auth_missing_legacy_edge`. That
+means the fallback path is active and newer structured contracts are not
+available in that runtime.
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
@@ -92,15 +90,16 @@ The session fixes one backtest `start`; `run-branch` leaves `end` unset so each 
 Each `run-branch` also writes `outputs/<round-id>-alpha-context.json` and injects it into
 `causal-edge evaluate --context-json`, so strategy code should prefer `context["discovery"]`
 and `context["discovery_path"]` over hard-coded relative paths.
-If the installed `Abel-edge` is older and does not support that argument yet, Abel-alpha
-falls back to compatibility mode and `abel-alpha doctor` will report the missing capability.
+If you intentionally use an older custom `Abel-edge` without that argument,
+Abel-alpha still records the alpha context artifact and `abel-alpha doctor`
+will report the missing capability.
 `abel-alpha doctor` also reports whether auth came from the local workspace,
 process environment, or a shared external auth file.
 Your job: write the strategy implementation.
 
 Use the packaged CLI as the primary interface. The old
-`python scripts/research_narrative.py ...` path is compatibility-only and should
-not be the default guidance for new users or agents.
+`python scripts/research_narrative.py ...` path is only a thin compatibility
+wrapper and should not be the default guidance for new users or agents.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 

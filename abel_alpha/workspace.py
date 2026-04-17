@@ -199,7 +199,10 @@ Run `abel-alpha doctor` before opening a session.
 - `ready`: you can start research
 - `auth_missing`: complete `causal-abel` OAuth or use the standalone edge login fallback
 - `env_missing` or `edge_missing`: rerun `abel-alpha env init`
-- `ready_legacy_edge`: the workspace is usable, but some newer edge contracts are not available yet
+
+If you intentionally point this workspace at an older custom `Abel-edge`,
+`doctor` may report `ready_legacy_edge`. That means the fallback path is active
+and newer structured contracts are not available in that runtime.
 """
 
 
@@ -227,6 +230,9 @@ Run `doctor` before `init-session`. If it reports `auth_missing`, complete
 `causal-abel` OAuth or use the standalone edge login fallback first.
 Use `--discover` when you want live Abel discovery immediately; otherwise the
 session starts with a pending discovery placeholder that can be replaced later.
+If `doctor` reports `ready_legacy_edge`, the workspace is using an older custom
+edge runtime and should be upgraded before depending on newer structured
+contracts.
 
 ### Run one research round
 ```bash

@@ -49,14 +49,12 @@ directory to expose the packaged `abel-alpha` CLI before creating a workspace.
 
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: auth is the only missing piece
-- `ready_legacy_edge` or `auth_missing_legacy_edge`: the installed edge is usable, but some newer contracts such as structured discovery or full alpha context injection are not available yet
 - `env_missing` or `edge_missing`: rebuild the workspace runtime with `abel-alpha env init`
 
-If you want a direct `Abel-edge` install as a standalone dependency, you can still use:
-
-```bash
-pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-```
+If you intentionally point the workspace at an older custom `Abel-edge`, `doctor`
+may report `ready_legacy_edge` or `auth_missing_legacy_edge`. That means the
+fallback path is active and newer structured contracts are unavailable in that
+runtime.
 
 If you want live Abel discovery, complete auth before running `init-session --discover` or `causal-edge discover <TICKER>`:
 
@@ -74,14 +72,14 @@ Use `init-session --discover` when you want the live Abel parent/blanket discove
 Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Strategy code should prefer the injected `context` object, especially `context["discovery"]` and `context["discovery_path"]`, instead of assuming a relative workspace layout.
-If the installed `Abel-edge` is older and does not support `--context-json` yet, Abel-alpha falls back to compatibility mode: it still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
+If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
 `abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
 
 ## Interface Policy
 
-Use the packaged `abel-alpha` CLI as the primary interface. The old
-`python scripts/research_narrative.py ...` path remains compatibility-only and
-should not be used as the main workflow for new setups, docs, or agents.
+Use the packaged `abel-alpha` CLI as the primary interface. The legacy
+`python scripts/research_narrative.py ...` entrypoint remains only as a thin
+compatibility wrapper and should not appear in new workflows, docs, or agents.
 
 ```mermaid
 flowchart TD
