@@ -1,6 +1,6 @@
-# causal-alpha
+# abel-alpha
 
-**Workspace-first causal alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
+**Workspace-first Abel alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
 
 ```bash
 python -m venv .venv
@@ -172,7 +172,7 @@ references/
 
 ```
 Abel CAP       → causal graph (discovery)
-causal-alpha   → research methodology + organization (this skill)
+abel-alpha     → research methodology + organization (this skill)
 causal-edge    → raw validation facts + edge-owned handoff contract
 causal-abel    → Abel API access (cap_probe.py)
 ```

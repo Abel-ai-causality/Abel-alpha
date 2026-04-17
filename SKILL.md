@@ -1,5 +1,5 @@
 ---
-name: causal-alpha
+name: abel-alpha
 version: 3.0.0
 description: >
   Use when: user wants to find alpha, discover what drives an asset, research
