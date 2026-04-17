@@ -7,18 +7,20 @@ python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1 --backtest-start 2020-01-01
-python scripts/research_narrative.py init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
-python scripts/research_narrative.py run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
-python scripts/research_narrative.py status --session research/tsla/tsla-v1
-python scripts/research_narrative.py check --session research/tsla/tsla-v1 --strict
+pip install -e .
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --backtest-start 2020-01-01
+abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha status --session research/tsla/tsla-v1
+abel-alpha check --session research/tsla/tsla-v1 --strict
 ```
 
-If that `git+https` install path fails in your network environment, use the same public repo via zip:
+The legacy `python scripts/research_narrative.py ...` entrypoint remains available as a compatibility path while the packaged CLI becomes the default.
+
+If you want a direct `Abel-edge` install as a standalone dependency, you can still use:
 
 ```bash
-pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/main.zip
+pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
 ```
 
 If you want live Abel discovery, complete auth before running `init-session --discover` or `causal-edge discover <TICKER>`:
@@ -28,7 +30,7 @@ npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/
 # use -g for a global install in the current agent platform
 # Abel-alpha does not auto-install causal-abel
 # complete causal-abel OAuth once, then causal-edge should reuse the same auth
-python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 ```
 
 If `causal-edge discover <TICKER>` still reports a missing Abel key after OAuth, `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then shared `causal-abel` auth files from `.agents/skills/causal-abel/.env.skill` and known OpenCode/Codex global skill roots. That lets agent-driven installs reuse the `causal-abel` auth file without copying the key into each workspace. Use `causal-edge login` only when you want the standalone fallback that stores `ABEL_API_KEY` directly for the current project.
@@ -100,7 +102,7 @@ Without Abel, fallback discovery is still useful for research continuity, but it
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, install `causal-abel` from `Abel-skills/tree/main/skills` if you want shared live Abel auth, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id> --discover`.
+Build your own: install `Abel-alpha` from this repo, install `causal-abel` from `Abel-skills/tree/main/skills` if you want shared live Abel auth, then run `abel-alpha init-session --ticker <TICKER> --exp-id <id> --discover`.
 
 ## Abel-Pro Mapping
 

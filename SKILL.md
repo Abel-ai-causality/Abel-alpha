@@ -16,24 +16,26 @@ metadata:
 
 Causation is the default prior because it survives regime change more often than correlation.
 
-Main install entrypoint: create and activate a virtual environment, install `Abel-edge`, then use the `causal-edge` CLI. `Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its OAuth flow, and let `causal-edge` reuse that shared auth before falling back to `causal-edge login`. If it still reports a missing key, check `python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
+Main install entrypoint: create and activate a virtual environment, install `Abel-alpha` from the local source checkout, then use the packaged `abel-alpha` CLI. `Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its OAuth flow, and let `causal-edge` reuse that shared auth before falling back to `causal-edge login`. If it still reports a missing key, check `python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
 python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
+pip install -e .
+abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
 # use -g for a global install in the current agent platform
 # then complete causal-abel OAuth once and let causal-edge reuse it
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --discover --backtest-start 2020-01-01
-python scripts/research_narrative.py init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
-python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
-python scripts/research_narrative.py status --session research/<ticker>/<exp-id>
-python scripts/research_narrative.py check --session research/<ticker>/<exp-id> --strict
+abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover --backtest-start 2020-01-01
+abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
+abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
+abel-alpha status --session research/<ticker>/<exp-id>
+abel-alpha check --session research/<ticker>/<exp-id> --strict
 ```
+
+The legacy `python scripts/research_narrative.py ...` path remains supported as a compatibility entrypoint during the CLI migration.
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
