@@ -351,6 +351,7 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  python: {result.python_path}")
     print(f"  alpha_source: {result.alpha_source}")
     print(f"  runtime_mode: {result.runtime_mode}")
+    print(f"  venv_provider: {result.venv_provider}")
     print(f"  edge_install_mode: {result.edge_install_mode}")
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
