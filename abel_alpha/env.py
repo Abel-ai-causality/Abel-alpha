@@ -229,13 +229,15 @@ def record_existing_runtime_python(
     runtime_python: Path,
 ) -> Path:
     """Persist an explicit existing interpreter path into the workspace manifest."""
-    resolved = runtime_python.resolve()
-    if not resolved.exists():
-        raise RuntimeError(f"Existing runtime python does not exist: {resolved}")
+    expanded = runtime_python.expanduser()
+    absolute = expanded if expanded.is_absolute() else (Path.cwd() / expanded)
+    normalized = absolute.resolve(strict=False)
+    if not normalized.exists():
+        raise RuntimeError(f"Existing runtime python does not exist: {normalized}")
     runtime = manifest.setdefault("runtime", {})
-    runtime["python"] = make_manifest_path(workspace_root, resolved)
+    runtime["python"] = make_manifest_path(workspace_root, absolute)
     write_workspace_manifest(workspace_root, manifest)
-    return resolved
+    return absolute
 
 
 def make_manifest_path(workspace_root: Path, path: Path) -> str:

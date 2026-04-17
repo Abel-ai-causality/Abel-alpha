@@ -5,7 +5,7 @@
 ```bash
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 abel-alpha init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
-# edit research/<ticker>/<exp_id>/branches/graph-v1/strategy.py
+# edit research/<ticker>/<exp_id>/branches/graph-v1/engine.py
 abel-alpha run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
 # iterate...
 ```
@@ -15,7 +15,7 @@ should be in a satisfactory state. Treat the packaged `abel-alpha` CLI as the
 default interface for new runs.
 
 `causal-edge evaluate` handles raw validation facts. `Abel-alpha` handles keep/discard,
-round recording, and session/branch summaries. You only write strategy.py and decide WHAT to try next.
+round recording, and session/branch summaries. You only write engine.py and decide WHAT to try next.
 
 ## Session Structure
 

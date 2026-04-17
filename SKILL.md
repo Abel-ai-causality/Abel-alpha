@@ -93,8 +93,8 @@ Without `--discover`, `init-session` creates the session immediately and writes 
 pending discovery placeholder.
 The session fixes one backtest `start`; `run-branch` leaves `end` unset so each run evaluates on the latest available data.
 Each `run-branch` also writes `outputs/<round-id>-alpha-context.json` and injects it into
-`causal-edge evaluate --context-json`, so strategy code should prefer `context["discovery"]`
-and `context["discovery_path"]` over hard-coded relative paths.
+`causal-edge evaluate --context-json`, so research engine code should prefer
+`self.context["discovery"]` and `self.context["discovery_path"]` over hard-coded relative paths.
 If you intentionally use an older custom `Abel-edge` without that argument,
 Abel-alpha still records the alpha context artifact and `abel-alpha doctor`
 will report the missing capability.

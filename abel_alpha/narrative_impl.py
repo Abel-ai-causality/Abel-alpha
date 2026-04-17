@@ -67,22 +67,35 @@ RESULTS_HEADER = [
     "handoff_path",
 ]
 
-STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
+ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
 
-Final strategy output must satisfy abs(position) <= 1.
-Default backtest behavior should use the provided start date and treat end=None as the latest available date.
-If provided, context contains workspace/session/branch/discovery metadata from Abel-alpha.
-Prefer context["discovery"] and context["discovery_path"] over hard-coded relative paths.
+Default backtest behavior should use the requested start date from self.context["_research"]["requested_window"].
+If provided, self.context contains workspace/session/branch/discovery metadata from Abel-alpha.
+Prefer self.context["discovery"] and self.context["discovery_path"] over hard-coded relative paths.
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
+from causal_edge.engine.base import StrategyEngine
 
-def run_strategy(*, start=None, end=None, context=None):
-    raise NotImplementedError("Fill in run_strategy()")
+
+class BranchEngine(StrategyEngine):
+    def compute_signals(self):
+        requested = ((self.context or {{}}).get("_research") or {{}}).get("requested_window") or {{}}
+        start = requested.get("start") or "2020-01-01"
+        dates = pd.date_range(start, periods=120, freq="D", tz="UTC")
+        prices = np.full(len(dates), 100.0, dtype=float)
+        positions = np.zeros(len(dates), dtype=float)
+        return positions, dates, prices
+
+    def get_latest_signal(self):
+        positions, dates, _ = self.compute_signals()
+        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
 '''
 
 
@@ -250,7 +263,7 @@ def main() -> int:
     if args.command == "init-branch":
         branch = init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
         print(f"Created Abel-alpha branch at {branch}")
-        print(f"  strategy: {branch / 'strategy.py'}")
+        print(f"  engine: {branch / 'engine.py'}")
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
         print("")
@@ -259,7 +272,7 @@ def main() -> int:
         print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
         print("")
         print("Next:")
-        print(f"  edit {branch / 'strategy.py'}")
+        print(f"  edit {branch / 'engine.py'}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
     if args.command == "run-branch":
@@ -610,10 +623,10 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         (branch / "rounds").mkdir(parents=True, exist_ok=True)
         (branch / "outputs").mkdir(parents=True, exist_ok=True)
         write_tsv_header(branch / "results.tsv", RESULTS_HEADER)
-        strategy = branch / "strategy.py"
-        if not strategy.exists():
-            strategy.write_text(
-                STRATEGY_TEMPLATE.format(
+        engine = branch / "engine.py"
+        if not engine.exists():
+            engine.write_text(
+                ENGINE_TEMPLATE.format(
                     ticker=discovery.get("ticker", session.parent.name.upper())
                 ),
                 encoding="utf-8",
@@ -795,7 +808,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     if context_mode != "injected":
         print(
             "Warning: installed Abel-edge does not support --context-json yet; "
-            "alpha context was recorded but not injected into run_strategy()."
+            "alpha context was recorded but not injected into the research engine context."
         )
     print(f"Alpha context: {context_path.relative_to(session)}")
     print(f"Edge result: {result_path.relative_to(session)}")
@@ -870,7 +883,7 @@ def check_session(session: Path, *, strict: bool) -> int:
             "README.md",
             "thesis.md",
             "memory.md",
-            "strategy.py",
+            "engine.py",
             "results.tsv",
         ):
             if not (branch_dir / required).exists():
@@ -1455,6 +1468,24 @@ def validate_edge_handoff(
     handoff_path = session / handoff_rel
     if not handoff_path.exists():
         return
+    workspace_root = find_workspace_root(session)
+    if workspace_root is not None:
+        try:
+            manifest = load_workspace_manifest(workspace_root)
+            python_path = resolve_runtime_python(workspace_root, manifest)
+        except Exception as exc:
+            failures.append(
+                f"{branch_name}: unable to resolve workspace runtime for handoff validation: {exc}"
+            )
+            return
+        if python_path.exists():
+            validate_edge_handoff_with_runtime(
+                python_path=python_path,
+                handoff_path=handoff_path,
+                branch_name=branch_name,
+                failures=failures,
+            )
+            return
     try:
         from causal_edge.research.handoff import (
             load_strategy_handoff,
@@ -1471,6 +1502,46 @@ def validate_edge_handoff(
         failures.append(f"{branch_name}: invalid edge handoff JSON: {exc}")
         return
     for reason in validate_strategy_handoff(payload, handoff_path=handoff_path):
+        failures.append(f"{branch_name}: edge handoff rejected - {reason}")
+
+
+def validate_edge_handoff_with_runtime(
+    *,
+    python_path: Path,
+    handoff_path: Path,
+    branch_name: str,
+    failures: list[str],
+) -> None:
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from causal_edge.research.handoff import load_strategy_handoff, validate_strategy_handoff\n"
+        "handoff_path = Path(sys.argv[1])\n"
+        "payload = load_strategy_handoff(handoff_path)\n"
+        "reasons = list(validate_strategy_handoff(payload, handoff_path=handoff_path))\n"
+        "print(json.dumps({'ok': not reasons, 'reasons': reasons}))\n"
+    )
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", script, str(handoff_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        failures.append(
+            f"{branch_name}: workspace runtime handoff validation failed: {detail}"
+        )
+        return
+    try:
+        payload = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        failures.append(
+            f"{branch_name}: workspace runtime returned invalid handoff validation output: {exc}"
+        )
+        return
+    for reason in payload.get("reasons") or []:
         failures.append(f"{branch_name}: edge handoff rejected - {reason}")
 
 

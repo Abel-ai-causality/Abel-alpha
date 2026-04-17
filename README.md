@@ -77,8 +77,8 @@ subprocesses resolve the same auth file deterministically.
 Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
 Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
 
-Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Strategy code should prefer the injected `context` object, especially `context["discovery"]` and `context["discovery_path"]`, instead of assuming a relative workspace layout.
-If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
+Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Research engine code should prefer the injected `self.context` object, especially `self.context["discovery"]` and `self.context["discovery_path"]`, instead of assuming a relative workspace layout.
+If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but the research engine will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
 `abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
 For first-pass strategy experiments, two common pitfalls are worth avoiding:
 - pass an explicit `limit=...` when fetching bars instead of relying on API defaults
@@ -108,7 +108,7 @@ flowchart TD
 
 ```
 L1: Raw evaluation (LLM-agnostic)   → causal-edge CLI
-    K auto-computed from strategy.py AST
+    K auto-computed from engine.py AST
     validate_strategy() runs every experiment
     emits raw verdict, metrics, failures, K
 
@@ -123,7 +123,7 @@ L3: Judgment guidance (skill text)   → SKILL.md
     Validation failures = research direction
     When to declare honest failure
 
-L4: Agent autonomy (留白)            → strategy.py
+L4: Agent autonomy (留白)            → engine.py
     What architecture, what features, what ML
     Every asset is different
 ```
