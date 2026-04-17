@@ -862,6 +862,12 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return completed.returncode or 1
+    if not has_explicit_hypothesis(args.hypothesis):
+        print(
+            "Warning: recording a round without an explicit hypothesis. "
+            "State the causal claim, expected sign, and invalidation condition before the next round.",
+            file=sys.stderr,
+        )
     decision = alpha_decision(rows, result, session=session)
 
     round_note = branch / "rounds" / f"{round_id}.md"
@@ -1043,6 +1049,16 @@ def print_status(session: Path) -> None:
     readiness_summary = format_data_readiness_summary(discovery)
     if readiness_summary:
         print(f"Discovery readiness: {readiness_summary}")
+    leader = select_leader(branches)
+    if leader and leader["rows"]:
+        latest = leader["rows"][-1]
+        latest_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
+        print(
+            "Lead: "
+            f"{leader['branch_id']} {latest.get('decision', 'pending')} {latest.get('verdict', 'n/a')} "
+            f"{latest.get('score', '?/?')} {latest_note.get('failure_signature', 'unknown')} "
+            f"active={latest_note.get('signal_activity', 'n/a')}"
+        )
     for branch in branches:
         latest = branch["rows"][-1] if branch["rows"] else {}
         latest_note = (
@@ -1057,7 +1073,8 @@ def print_status(session: Path) -> None:
             f"discard={discard_count:2d} latest={latest.get('round_id', 'none')} {latest.get('decision', 'pending')} "
             f"{latest.get('verdict', 'n/a')} {latest.get('score', '?/?')} "
             f"{latest_note.get('failure_signature', 'unknown')} "
-            f"active={latest_note.get('signal_activity', 'n/a')}"
+            f"active={latest_note.get('signal_activity', 'n/a')} "
+            f"hypothesis={'yes' if has_explicit_hypothesis(latest_note.get('hypothesis', '')) else 'no'}"
         )
 
 
@@ -1141,6 +1158,88 @@ def check_session(session: Path, *, strict: bool) -> int:
     return 0
 
 
+def select_leader(branches: list[dict]) -> dict | None:
+    ranked = ranked_branches(branches)
+    return ranked[0] if ranked else None
+
+
+def ranked_branches(branches: list[dict]) -> list[dict]:
+    scored = [branch for branch in branches if branch["rows"]]
+    return sorted(scored, key=branch_rank_key, reverse=True)
+
+
+def branch_rank_key(branch: dict) -> tuple:
+    rows = branch["rows"]
+    latest = rows[-1]
+    note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
+    return (
+        decision_rank(latest.get("decision", "")),
+        verdict_rank(latest.get("verdict", "")),
+        parse_score_ratio(latest.get("score", "")),
+        float(latest.get("lo_adj") or 0),
+        float(latest.get("sharpe") or 0),
+        signal_activity_ratio(note.get("signal_activity", "")),
+        len(rows),
+    )
+
+
+def decision_rank(decision: str) -> int:
+    return {"keep": 3, "pending": 2, "discard": 1}.get(str(decision or "").strip(), 0)
+
+
+def verdict_rank(verdict: str) -> int:
+    return {"PASS": 3, "FAIL": 2, "ERROR": 1}.get(str(verdict or "").strip().upper(), 0)
+
+
+def parse_score_ratio(score: str) -> float:
+    text = str(score or "").strip()
+    if "/" not in text:
+        return 0.0
+    left, right = text.split("/", 1)
+    try:
+        numerator = float(left)
+        denominator = float(right)
+    except ValueError:
+        return 0.0
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
+def signal_activity_ratio(activity: str) -> float:
+    text = str(activity or "").strip()
+    if "/" not in text:
+        return 0.0
+    left, right = [part.strip() for part in text.split("/", 1)]
+    try:
+        active = float(left)
+        total = float(right)
+    except ValueError:
+        return 0.0
+    if total <= 0:
+        return 0.0
+    return active / total
+
+
+def normalize_hypothesis_text(value: str) -> str:
+    text = str(value or "").strip()
+    if text:
+        return text
+    return (
+        "Hypothesis missing. Before the next round, state the causal claim, "
+        "expected sign, and invalidation condition explicitly."
+    )
+
+
+def has_explicit_hypothesis(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(
+        text
+        and text != "No hypothesis supplied."
+        and not text.startswith("Hypothesis missing.")
+    )
+
+
 def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -> str:
     keep_branches = [
         branch
@@ -1152,14 +1251,17 @@ def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -
         for branch in branches
         if branch["rows"] and branch["rows"][-1].get("decision") == "discard"
     ]
-    leader = keep_branches[-1] if keep_branches else (branches[0] if branches else None)
+    leader = select_leader(branches)
     executive = "No validated rounds yet. Start the first branch to establish the session baseline."
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
         leader_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
+        lead_label = "Current KEEP baseline"
+        if latest.get("decision") != "keep":
+            lead_label = "Current lead candidate (no KEEP baseline yet)"
         executive = (
             f"Session has {len(branches)} branch(es): {len(keep_branches)} keep and {len(discard_branches)} discard. "
-            f"Current lead is `{leader['branch_id']}` at `{latest.get('round_id', 'none')}` with Lo {float(latest.get('lo_adj') or 0):.3f}, "
+            f"{lead_label} is `{leader['branch_id']}` at `{latest.get('round_id', 'none')}` with Lo {float(latest.get('lo_adj') or 0):.3f}, "
             f"Sharpe {float(latest.get('sharpe') or 0):.3f}, PnL {float(latest.get('pnl') or 0):.1f}%, "
             f"failure signature `{leader_note.get('failure_signature', 'unknown')}`, "
             f"active `{leader_note.get('signal_activity', 'n/a')}`."
@@ -1216,6 +1318,8 @@ Explore {discovery.get("ticker", session.parent.name.upper())} in session `{sess
 ## Selection Narrative
 
 This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_branches)} keep, {len(discard_branches)} discard, {len(branches) - len(keep_branches) - len(discard_branches)} pending.
+
+{render_selection_narrative(branches)}
 
 ## Branches
 
@@ -1290,6 +1394,7 @@ See `thesis.md` for the branch hypothesis.
 1. latest_hypothesis: `{latest_note.get("hypothesis", "not recorded")}`
 1. latest_summary: `{latest_note.get("summary", latest.get("description", "not recorded"))}`
 1. latest_failures: `{latest_note.get("failures", "none")}`
+1. hypothesis_status: `{"explicit" if has_explicit_hypothesis(latest_note.get("hypothesis", "")) else "needs work"}`
 
 ## Round Ledger
 
@@ -1370,6 +1475,12 @@ generated by Abel-alpha narrative layer
 Branch `{branch["branch_id"]}` currently assumes: `{hypothesis or latest.get("description", "Initial branch hypothesis not recorded yet")}`.
 Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.get("verdict", "not_validated")}`.
 
+## Hypothesis Checklist
+
+- causal claim: `state what should drive the target and why`
+- expected sign / regime: `state when the signal should be long, short, or flat`
+- invalidation condition: `state what evidence would make this branch unconvincing`
+
 ## Input Universe
 
 - target: `{discovery.get("ticker", branch["ticker"])}`
@@ -1432,6 +1543,29 @@ def render_discovery_readiness_section(discovery: dict) -> str:
         f"- usable_tickers: `{usable}`\n"
         f"- full_window_tickers: `{full_window}`"
     )
+
+
+def render_selection_narrative(branches: list[dict]) -> str:
+    ranked = ranked_branches(branches)[:3]
+    if not ranked:
+        return "No branch rankings yet because no validated rounds have been recorded."
+    lines = []
+    for index, branch in enumerate(ranked, start=1):
+        latest = branch["rows"][-1]
+        note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
+        reason = (
+            latest_recorded_hypothesis(branch)
+            or note.get("hypothesis")
+            or latest.get("description", "No explicit hypothesis recorded yet.")
+        )
+        label = "lead" if index == 1 else "runner-up"
+        lines.append(
+            f"{index}. `{branch['branch_id']}` ({label}) -> "
+            f"`{latest.get('decision', 'pending')}` / `{latest.get('verdict', 'n/a')}` / "
+            f"`{latest.get('score', '?/?')}` / signature `{note.get('failure_signature', 'unknown')}`. "
+            f"Reasoning: `{reason}`"
+        )
+    return "\n".join(lines)
 
 
 def alpha_decision(rows: list[dict[str, str]], result: dict, *, session: Path | None = None) -> str:
@@ -1583,7 +1717,9 @@ def build_branch_snapshot_line(branch: dict) -> str:
     first = rows[0]
     note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
     reason = (
-        note.get("hypothesis") or note.get("failures") or latest.get("description", "")
+        latest_recorded_hypothesis(branch)
+        or note.get("failures")
+        or latest.get("description", "")
     )
     return (
         f"1. `{branch['branch_id']}` -> `{latest.get('decision', 'pending')}` after {len(rows)} round(s). "
@@ -1595,6 +1731,12 @@ def build_branch_snapshot_line(branch: dict) -> str:
 
 
 def session_next_step(branches: list[dict]) -> str:
+    leader = select_leader(branches)
+    has_historical_keep = any(
+        row.get("decision") == "keep"
+        for branch in branches
+        for row in branch["rows"]
+    )
     keep = [
         branch
         for branch in branches
@@ -1609,6 +1751,22 @@ def session_next_step(branches: list[dict]) -> str:
         return f"Continue improving `{keep[-1]['branch_id']}` or branch from the discarded ideas now that both keep and discard outcomes are recorded."
     if keep:
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
+    if leader and leader["rows"]:
+        note = read_round_note(leader["branch_dir"], leader["rows"][-1].get("round_id", ""))
+        if not has_explicit_hypothesis(note.get("hypothesis", "")):
+            return (
+                f"Before the next round, tighten `{leader['branch_id']}` by writing an explicit hypothesis "
+                "with a causal claim, expected sign, and invalidation condition."
+            )
+        if has_historical_keep:
+            return (
+                f"No branch is currently ending on KEEP, but `{leader['branch_id']}` still carries the strongest "
+                "history. Resume it from the latest credible baseline before opening a new sibling branch."
+            )
+        return (
+            f"No KEEP baseline exists yet. Resume `{leader['branch_id']}` first because it is currently the strongest "
+            "candidate, or open a sibling branch only if you have a genuinely different causal thesis."
+        )
     return "Revise the discarded branches or open a new branch with a different hypothesis before the next validation round."
 
 
@@ -1616,7 +1774,7 @@ def latest_recorded_hypothesis(branch: dict) -> str:
     for row in reversed(branch["rows"]):
         note = read_round_note(branch["branch_dir"], row.get("round_id", ""))
         hypothesis = (note.get("hypothesis") or "").strip()
-        if hypothesis and hypothesis != "No hypothesis supplied.":
+        if has_explicit_hypothesis(hypothesis):
             return hypothesis
     return ""
 
@@ -1728,7 +1886,7 @@ def render_round_note(**kwargs) -> str:
 ## Inputs And Hypothesis
 
 - input: `{kwargs.get("input_note") or f"Branch {kwargs['branch_id']} entering {kwargs['round_id']}."}`
-- hypothesis: `{kwargs.get("hypothesis") or "No hypothesis supplied."}`
+- hypothesis: `{normalize_hypothesis_text(kwargs.get("hypothesis", ""))}`
 - expected_signal: `{kwargs.get("expected_signal") or "Improve evaluation outcome versus the current working baseline."}`
 
 ## Actions
