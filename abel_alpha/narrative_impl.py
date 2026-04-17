@@ -82,6 +82,8 @@ Prefer StrategyEngine research helpers over hard-coded discovery parsing:
   - self.research_target_driver_frame(overlap="intersection")
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
+If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
+do not hide setup failures behind synthetic flat outputs.
 """
 
 from __future__ import annotations
@@ -299,6 +301,11 @@ def main() -> int:
             readiness_summary = format_data_readiness_summary(discovery)
             if readiness_summary:
                 print(f"  data_readiness: {readiness_summary}")
+            for line in readiness_recommendation_lines(discovery):
+                print(f"  {line}")
+            warning = build_readiness_warning(discovery)
+            if warning:
+                print(f"  warning: {warning}")
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
@@ -835,6 +842,14 @@ def run_branch_round(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
+    warning = build_readiness_warning(discovery)
+    if warning:
+        print(
+            f"Warning: {warning}",
+            file=sys.stderr,
+        )
+        for line in readiness_recommendation_lines(discovery):
+            print(f"Recommendation: {line}", file=sys.stderr)
 
     python_bin = args.python_bin or resolve_default_python_bin(branch)
     context_mode = "injected"
@@ -1080,6 +1095,11 @@ def print_status(session: Path) -> None:
     readiness_summary = format_data_readiness_summary(discovery)
     if readiness_summary:
         print(f"Discovery readiness: {readiness_summary}")
+        warning = build_readiness_warning(discovery)
+        if warning:
+            print(f"Readiness warning: {warning}")
+        for line in readiness_recommendation_lines(discovery):
+            print(f"Recommended start: {line}")
     leader = select_leader(branches)
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
@@ -1562,12 +1582,13 @@ def format_data_readiness_summary(discovery: dict) -> str:
     if not summary:
         return ""
     requested = report.get("requested_window") or {}
+    probe_limit = report.get("probe_limit")
     return (
         f"{summary.get('full_window_count', 0)} full-window, "
         f"{summary.get('partial_window_count', 0)} partial, "
         f"{summary.get('no_data_count', 0)} no-data, "
         f"{summary.get('error_count', 0)} error "
-        f"(start {requested.get('start', 'latest')})"
+        f"(start {requested.get('start', 'latest')}, probe {probe_limit or 'n/a'})"
     )
 
 
@@ -1578,11 +1599,46 @@ def render_discovery_readiness_section(discovery: dict) -> str:
         return "`No data readiness report recorded yet. Run live discovery again after edge verification is available.`"
     full_window = ", ".join(discovery.get("full_window_tickers") or []) or "none"
     usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
-    return (
+    lines = [
         f"- summary: `{format_data_readiness_summary(discovery)}`\n"
         f"- usable_tickers: `{usable}`\n"
         f"- full_window_tickers: `{full_window}`"
+    ]
+    warning = build_readiness_warning(discovery)
+    if warning:
+        lines.append(f"- warning: `{warning}`")
+    for line in readiness_recommendation_lines(discovery):
+        lines.append(f"- recommended_start: `{line}`")
+    return "\n".join(lines)
+
+
+def build_readiness_warning(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return ""
+    if int(summary.get("full_window_count", 0) or 0) > 0:
+        return ""
+    if int(summary.get("usable_count", 0) or 0) == 0:
+        return "No usable tickers were confirmed for the requested backtest window."
+    requested_start = (report.get("requested_window") or {}).get("start", "latest")
+    return (
+        "No full-window tickers cover the requested start "
+        f"{requested_start}. Adjust `backtest_start` before spending more research rounds."
     )
+
+
+def readiness_recommendation_lines(discovery: dict) -> list[str]:
+    report = discovery.get("data_readiness") or {}
+    recommendations = report.get("recommended_starts") or {}
+    lines: list[str] = []
+    target_start = recommendations.get("target_recommended_start")
+    common_start = recommendations.get("common_recommended_start")
+    if target_start:
+        lines.append(f"target={target_start}")
+    if common_start:
+        lines.append(f"common={common_start}")
+    return lines
 
 
 def render_selection_narrative(branches: list[dict]) -> str:
