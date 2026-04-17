@@ -16,6 +16,7 @@ abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover --backtest-start 2020-01-01
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha status --session research/tsla/tsla-v1
 abel-alpha check --session research/tsla/tsla-v1 --strict
 ```
@@ -74,12 +75,13 @@ When you use `causal-edge login` inside a workspace, alpha-managed runs now
 export that workspace `.env` through `ABEL_AUTH_ENV_FILE` so session and branch
 subprocesses resolve the same auth file deterministically.
 
-Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
+Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. On a modern `Abel-edge` runtime, alpha also runs edge-owned data verification immediately after discovery and records which tickers have full-window, partial-window, missing, or broken history. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
 Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Research engine code should prefer the injected `self.context` object, especially `self.context["discovery"]` and `self.context["discovery_path"]`, instead of assuming a relative workspace layout.
 If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but the research engine will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
 `abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
+When you want fast, non-recording diagnostics while iterating on a branch, use `abel-alpha debug-branch --branch ...`. That delegates to edge's diagnostics-first debug surface without appending a new round to the narrative ledger.
 For first-pass strategy experiments, two common pitfalls are worth avoiding:
 - pass an explicit `limit=...` when fetching bars instead of relying on API defaults
 - avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives

@@ -59,6 +59,7 @@ abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover --backtest-start 2020-01-01
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
+abel-alpha debug-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
 abel-alpha status --session research/<ticker>/<exp-id>
 abel-alpha check --session research/<ticker>/<exp-id> --strict
 ```
@@ -89,6 +90,8 @@ available in that runtime.
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
 when you want the live Abel discovery persisted into `discovery.json` and the event trail.
+On a modern edge runtime, alpha also records edge-owned data readiness right after
+live discovery so the session can see which drivers actually have usable history.
 Without `--discover`, `init-session` creates the session immediately and writes a
 pending discovery placeholder.
 The session fixes one backtest `start`; `run-branch` leaves `end` unset so each run evaluates on the latest available data.
@@ -100,6 +103,8 @@ Abel-alpha still records the alpha context artifact and `abel-alpha doctor`
 will report the missing capability.
 `abel-alpha doctor` also reports whether auth came from the local workspace,
 process environment, or a shared external auth file.
+Use `abel-alpha debug-branch` when you need edge diagnostics and signal-activity
+facts without recording a formal round.
 When writing the first strategy, pass an explicit `limit=...` if you fetch
 bars, and avoid blanket `dropna()` on a joined frame before confirming the
 target ticker still remains present.

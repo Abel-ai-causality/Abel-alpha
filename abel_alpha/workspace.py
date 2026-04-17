@@ -191,12 +191,15 @@ abel-alpha env init
 abel-alpha doctor
 {default_activate_command()}
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
 `abel-alpha env init` prepares the local `.venv` and installs `Abel-alpha`
 plus `Abel-edge`. By default it installs `Abel-edge` from GitHub `main` until
 formal releases exist. If you want live Abel discovery, install `causal-abel`,
 complete its OAuth flow, then rerun `abel-alpha init-session --discover`.
+That live discovery path will also record edge-owned data readiness when the
+workspace runtime supports it.
 If your environment cannot create a new venv, point alpha at an existing
 interpreter with `abel-alpha env init --runtime-python /path/to/python`.
 
@@ -247,6 +250,7 @@ contracts.
 ### Run one research round
 ```bash
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
 ### Understand the workspace layout

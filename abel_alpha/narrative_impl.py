@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -217,6 +218,17 @@ def main() -> int:
         help="Interpreter used to run causal-edge evaluate (defaults to the workspace python when available)",
     )
 
+    debug_branch = sub.add_parser(
+        "debug-branch",
+        help="Run edge debug-evaluate without recording a narrative round",
+    )
+    debug_branch.add_argument("--branch", required=True)
+    debug_branch.add_argument(
+        "--python-bin",
+        default=None,
+        help="Interpreter used to run causal-edge debug-evaluate (defaults to the workspace python when available)",
+    )
+
     render = sub.add_parser("render", help="Render summaries for a session")
     render.add_argument("--session", required=True)
 
@@ -254,6 +266,9 @@ def main() -> int:
                 f"  discovery_source: {discovery.get('source', 'unknown')} "
                 f"(K={discovery.get('K_discovery', 0)})"
             )
+            readiness_summary = format_data_readiness_summary(discovery)
+            if readiness_summary:
+                print(f"  data_readiness: {readiness_summary}")
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
@@ -277,6 +292,8 @@ def main() -> int:
         return 0
     if args.command == "run-branch":
         return run_branch_round(args)
+    if args.command == "debug-branch":
+        return debug_branch_run(args)
     if args.command == "render":
         render_session(resolve_workspace_arg_path(args.session))
         return 0
@@ -412,11 +429,16 @@ def init_session_dir(
     discovery_data = None
     if discover:
         discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
+        discovery_data["backtest"] = {"start": backtest_start}
+        discovery_data = attach_data_readiness(
+            session=session,
+            discovery_data=discovery_data,
+            backtest_start=backtest_start,
+        )
     with SessionLock(session):
         write_tsv_header(session / "events.tsv", EVENTS_HEADER)
         discovery_path = session / "discovery.json"
         if discovery_data is not None:
-            discovery_data["backtest"] = {"start": backtest_start}
             discovery_path.write_text(
                 json.dumps(discovery_data, indent=2),
                 encoding="utf-8",
@@ -471,6 +493,25 @@ def init_session_dir(
                     "artifact_path": str(discovery_path.relative_to(session)),
                 },
             )
+            if discovery_data.get("data_readiness"):
+                append_tsv_row(
+                    session / "events.tsv",
+                    EVENTS_HEADER,
+                    {
+                        "timestamp": _now(),
+                        "event": "data_readiness_recorded",
+                        "branch_id": "",
+                        "round_id": "",
+                        "mode": "",
+                        "verdict": "",
+                        "decision": "",
+                        "description": (
+                            "Recorded driver data readiness: "
+                            f"{format_data_readiness_summary(discovery_data)}"
+                        ),
+                        "artifact_path": str(discovery_path.relative_to(session)),
+                    },
+                )
         render_session(session)
     return session
 
@@ -571,6 +612,94 @@ def build_discovery_payload_from_text(
         "backtest": {"start": DEFAULT_BACKTEST_START},
         "created_at": _now(),
     }
+
+
+def attach_data_readiness(
+    *,
+    session: Path,
+    discovery_data: dict,
+    backtest_start: str,
+) -> dict:
+    """Attach edge-owned data readiness facts to a live discovery payload."""
+    discovery_path = session / "discovery.json"
+    discovery_path.write_text(json.dumps(discovery_data, indent=2), encoding="utf-8")
+    try:
+        report = run_edge_verify_data(
+            session=session,
+            discovery_path=discovery_path,
+            backtest_start=backtest_start,
+        )
+    except RuntimeError:
+        discovery_path.unlink(missing_ok=True)
+        return discovery_data
+    discovery_path.unlink(missing_ok=True)
+    if report is None:
+        return discovery_data
+    enriched = dict(discovery_data)
+    enriched["data_readiness"] = report
+    enriched["usable_tickers"] = [
+        item.get("ticker")
+        for item in report.get("results", [])
+        if item.get("usable")
+    ]
+    enriched["full_window_tickers"] = [
+        item.get("ticker")
+        for item in report.get("results", [])
+        if item.get("status") == "full_window"
+    ]
+    return enriched
+
+
+def run_edge_verify_data(
+    *,
+    session: Path,
+    discovery_path: Path,
+    backtest_start: str,
+) -> dict | None:
+    """Run edge verify-data against a discovery payload and parse the structured report."""
+    python_bin = resolve_default_python_bin(session)
+    workspace_root = find_workspace_root(session)
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    fd, temp_name = tempfile.mkstemp(suffix="-verify-data.json")
+    os.close(fd)
+    output_path = Path(temp_name)
+    output_path.unlink(missing_ok=True)
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "verify-data",
+        "--discovery-json",
+        str(discovery_path),
+        "--start",
+        backtest_start,
+        "--output-json",
+        str(output_path),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    if not output_path.exists():
+        if "No module named" in (completed.stderr or "") or "No such command" in (
+            completed.stderr or completed.stdout or ""
+        ):
+            return None
+        raise RuntimeError(
+            "Abel-edge verify-data did not produce a readiness report. "
+            "Upgrade the workspace runtime before depending on discovery readiness."
+        )
+    try:
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    finally:
+        output_path.unlink(missing_ok=True)
 
 
 def parse_discovery_items(output: str) -> list[dict[str, object]]:
@@ -733,7 +862,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return completed.returncode or 1
-    decision = alpha_decision(rows, result)
+    decision = alpha_decision(rows, result, session=session)
 
     round_note = branch / "rounds" / f"{round_id}.md"
     round_note.write_text(
@@ -817,6 +946,64 @@ def run_branch_round(args: argparse.Namespace) -> int:
     return 0 if result.get("verdict") == "PASS" else 1
 
 
+def debug_branch_run(args: argparse.Namespace) -> int:
+    branch = resolve_workspace_arg_path(args.branch).resolve()
+    session = branch.parent.parent
+    discovery = load_discovery(session)
+    workspace_root = find_workspace_root(branch)
+    backtest_start = _get_backtest_start(discovery)
+    context_path = branch / "outputs" / "debug-alpha-context.json"
+    debug_result_path = branch / "outputs" / "debug-edge-result.json"
+    context_path.parent.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(
+        json.dumps(
+            build_branch_context(
+                branch=branch,
+                session=session,
+                discovery=discovery,
+                round_id="debug",
+                backtest_start=backtest_start,
+            ),
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    python_bin = args.python_bin or resolve_default_python_bin(branch)
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "debug-evaluate",
+        "--workdir",
+        str(branch),
+        "--start",
+        backtest_start,
+        "--output-json",
+        str(debug_result_path),
+    ]
+    if edge_supports_context_json(python_bin, session):
+        command[6:6] = ["--context-json", str(context_path)]
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    sys.stdout.write(completed.stdout)
+    sys.stderr.write(completed.stderr)
+    print(f"Debug context: {context_path.relative_to(session)}")
+    if debug_result_path.exists():
+        print(f"Debug result: {debug_result_path.relative_to(session)}")
+    print("No narrative round was recorded.")
+    return completed.returncode
+
+
 def render_session(session: Path) -> None:
     discovery = load_discovery(session)
     branches = load_branches(session)
@@ -853,15 +1040,24 @@ def print_status(session: Path) -> None:
     )
     print(f"Branches: {len(branches)}")
     print(f"Total rounds: {sum(len(branch['rows']) for branch in branches)}")
+    readiness_summary = format_data_readiness_summary(discovery)
+    if readiness_summary:
+        print(f"Discovery readiness: {readiness_summary}")
     for branch in branches:
         latest = branch["rows"][-1] if branch["rows"] else {}
+        latest_note = (
+            read_round_note(branch["branch_dir"], latest.get("round_id", "")) if latest else {}
+        )
         keep_count = sum(1 for row in branch["rows"] if row.get("decision") == "keep")
         discard_count = sum(
             1 for row in branch["rows"] if row.get("decision") == "discard"
         )
         print(
             f"  {branch['branch_id']:20s} rounds={len(branch['rows']):2d} keep={keep_count:2d} "
-            f"discard={discard_count:2d} latest={latest.get('round_id', 'none')} {latest.get('decision', 'pending')}"
+            f"discard={discard_count:2d} latest={latest.get('round_id', 'none')} {latest.get('decision', 'pending')} "
+            f"{latest.get('verdict', 'n/a')} {latest.get('score', '?/?')} "
+            f"{latest_note.get('failure_signature', 'unknown')} "
+            f"active={latest_note.get('signal_activity', 'n/a')}"
         )
 
 
@@ -960,10 +1156,13 @@ def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -
     executive = "No validated rounds yet. Start the first branch to establish the session baseline."
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
+        leader_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
         executive = (
             f"Session has {len(branches)} branch(es): {len(keep_branches)} keep and {len(discard_branches)} discard. "
             f"Current lead is `{leader['branch_id']}` at `{latest.get('round_id', 'none')}` with Lo {float(latest.get('lo_adj') or 0):.3f}, "
-            f"Sharpe {float(latest.get('sharpe') or 0):.3f}, PnL {float(latest.get('pnl') or 0):.1f}%."
+            f"Sharpe {float(latest.get('sharpe') or 0):.3f}, PnL {float(latest.get('pnl') or 0):.1f}%, "
+            f"failure signature `{leader_note.get('failure_signature', 'unknown')}`, "
+            f"active `{leader_note.get('signal_activity', 'n/a')}`."
         )
 
     branch_lines = (
@@ -1009,6 +1208,10 @@ generated by Abel-alpha narrative layer
 ## Session Goal
 
 Explore {discovery.get("ticker", session.parent.name.upper())} in session `{session.name}` using discovery source `{discovery.get("source", "unknown")}` and compare candidate branches through validated rounds.
+
+## Discovery Readiness
+
+{render_discovery_readiness_section(discovery)}
 
 ## Selection Narrative
 
@@ -1066,6 +1269,13 @@ See `thesis.md` for the branch hypothesis.
 - decision: `{latest.get("decision", "pending")}`
 - summary: `{latest.get("description", "No rounds recorded yet.")}`
 - next_step: `{latest_note.get("next_step", "Review the latest round note for the next move.")}`
+
+## Latest Diagnostics
+
+- failure_signature: `{latest_note.get("failure_signature", "not recorded")}`
+- runtime_stage: `{latest_note.get("runtime_stage", "not recorded")}`
+- signal_activity: `{latest_note.get("signal_activity", "not recorded")}`
+- diagnostic_hints: `{latest_note.get("diagnostic_hints", "not recorded")}`
 
 ## Latest Artifacts
 
@@ -1195,7 +1405,36 @@ def format_discovery_nodes(items: list[object], *, limit: int = 5) -> str:
     return ", ".join(rendered) or "none recorded"
 
 
-def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
+def format_data_readiness_summary(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return ""
+    requested = report.get("requested_window") or {}
+    return (
+        f"{summary.get('full_window_count', 0)} full-window, "
+        f"{summary.get('partial_window_count', 0)} partial, "
+        f"{summary.get('no_data_count', 0)} no-data, "
+        f"{summary.get('error_count', 0)} error "
+        f"(start {requested.get('start', 'latest')})"
+    )
+
+
+def render_discovery_readiness_section(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return "`No data readiness report recorded yet. Run live discovery again after edge verification is available.`"
+    full_window = ", ".join(discovery.get("full_window_tickers") or []) or "none"
+    usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
+    return (
+        f"- summary: `{format_data_readiness_summary(discovery)}`\n"
+        f"- usable_tickers: `{usable}`\n"
+        f"- full_window_tickers: `{full_window}`"
+    )
+
+
+def alpha_decision(rows: list[dict[str, str]], result: dict, *, session: Path | None = None) -> str:
     if result.get("verdict") != "PASS":
         return "discard"
 
@@ -1207,28 +1446,86 @@ def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
     if baseline is None:
         return "keep"
 
-    from causal_edge.validation.gate_logic import decide_keep_discard
-    from causal_edge.validation.metrics import load_profile
-
     profile_name = str(result.get("profile") or "").strip()
     if not profile_name:
         raise RuntimeError(
             "edge evaluation did not provide a profile for baseline compare"
         )
 
-    decision = decide_keep_discard(
-        result.get("metrics", {}),
-        {
-            "lo_adjusted": float(baseline.get("lo_adj") or 0),
-            "position_ic": float(baseline.get("ic") or 0),
-            "omega": float(baseline.get("omega") or 0),
-            "sharpe": float(baseline.get("sharpe") or 0),
-            "total_return": float(baseline.get("pnl") or 0) / 100.0,
-            "max_dd": float(baseline.get("max_dd") or 0),
-        },
-        load_profile(profile_name),
-    )
+    baseline_metrics = {
+        "lo_adjusted": float(baseline.get("lo_adj") or 0),
+        "position_ic": float(baseline.get("ic") or 0),
+        "omega": float(baseline.get("omega") or 0),
+        "sharpe": float(baseline.get("sharpe") or 0),
+        "total_return": float(baseline.get("pnl") or 0) / 100.0,
+        "max_dd": float(baseline.get("max_dd") or 0),
+    }
+
+    try:
+        from causal_edge.validation.gate_logic import decide_keep_discard
+        from causal_edge.validation.metrics import load_profile
+
+        decision = decide_keep_discard(
+            result.get("metrics", {}),
+            baseline_metrics,
+            load_profile(profile_name),
+        )
+    except ImportError:
+        if session is None:
+            raise
+        decision = alpha_decision_with_runtime(
+            session=session,
+            current_metrics=result.get("metrics", {}),
+            baseline_metrics=baseline_metrics,
+            profile_name=profile_name,
+        )
     return "keep" if decision == "KEEP" else "discard"
+
+
+def alpha_decision_with_runtime(
+    *,
+    session: Path,
+    current_metrics: dict,
+    baseline_metrics: dict,
+    profile_name: str,
+) -> str:
+    workspace_root = find_workspace_root(session)
+    if workspace_root is None:
+        raise RuntimeError(
+            "Cannot resolve workspace runtime for baseline comparison."
+        )
+    manifest = load_workspace_manifest(workspace_root)
+    python_path = resolve_runtime_python(workspace_root, manifest)
+    payload = {
+        "current_metrics": current_metrics,
+        "baseline_metrics": baseline_metrics,
+        "profile_name": profile_name,
+    }
+    script = (
+        "import json, sys\n"
+        "from causal_edge.validation.gate_logic import decide_keep_discard\n"
+        "from causal_edge.validation.metrics import load_profile\n"
+        "payload = json.loads(sys.stdin.read())\n"
+        "decision = decide_keep_discard(\n"
+        "    payload['current_metrics'],\n"
+        "    payload['baseline_metrics'],\n"
+        "    load_profile(payload['profile_name']),\n"
+        ")\n"
+        "print(decision)\n"
+    )
+    completed = subprocess.run(
+        [str(python_path), "-c", script],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip() or "unknown error"
+        raise RuntimeError(
+            f"Workspace runtime could not compare against the KEEP baseline: {detail}"
+        )
+    return completed.stdout.strip() or "DISCARD"
 
 
 def build_branch_context(
@@ -1291,7 +1588,9 @@ def build_branch_snapshot_line(branch: dict) -> str:
     return (
         f"1. `{branch['branch_id']}` -> `{latest.get('decision', 'pending')}` after {len(rows)} round(s). "
         f"Why: `{reason or 'not recorded'}`. Trend: Lo {float(first.get('lo_adj') or 0):.3f} -> {float(latest.get('lo_adj') or 0):.3f}, "
-        f"Sharpe {float(first.get('sharpe') or 0):.3f} -> {float(latest.get('sharpe') or 0):.3f}, PnL {float(first.get('pnl') or 0):.1f}% -> {float(latest.get('pnl') or 0):.1f}%."
+        f"Sharpe {float(first.get('sharpe') or 0):.3f} -> {float(latest.get('sharpe') or 0):.3f}, "
+        f"PnL {float(first.get('pnl') or 0):.1f}% -> {float(latest.get('pnl') or 0):.1f}%, "
+        f"signature `{note.get('failure_signature', 'unknown')}`, active `{note.get('signal_activity', 'n/a')}`."
     )
 
 
@@ -1379,6 +1678,10 @@ def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
             "hypothesis",
             "expected_signal",
             "failures",
+            "failure_signature",
+            "runtime_stage",
+            "signal_activity",
+            "diagnostic_hints",
             "summary",
             "next_step",
             "context_mode",
@@ -1398,6 +1701,8 @@ def render_round_note(**kwargs) -> str:
     metrics = result.get("metrics", {})
     requested_window = result.get("requested_window", {})
     effective_window = result.get("effective_window", {})
+    diagnostics = result.get("diagnostics") or {}
+    signal = diagnostics.get("signal") or {}
     actions = kwargs.get("actions") or ["Executed raw causal-edge evaluation"]
     action_lines = "\n".join(f"1. {action}" for action in actions)
     return f"""# {kwargs["round_id"]}
@@ -1439,6 +1744,13 @@ def render_round_note(**kwargs) -> str:
 - total_return: `{metrics.get("total_return", 0) * 100:.1f}%`
 - max_dd: `{metrics.get("max_dd", 0) * 100:.1f}%`
 - failures: `{"; ".join(result.get("failures", [])) or "none"}`
+
+## Diagnostics
+
+- failure_signature: `{diagnostics.get("failure_signature", "unknown")}`
+- runtime_stage: `{diagnostics.get("runtime_stage", "unknown")}`
+- signal_activity: `{signal.get("active_days", 0)} / {signal.get("total_days", 0)}`
+- diagnostic_hints: `{"; ".join(diagnostics.get("hints", [])) or "none"}`
 
 ## Artifacts
 
