@@ -79,6 +79,7 @@ Prefer StrategyEngine research helpers over hard-coded discovery parsing:
   - self.research_driver_candidates(...)
   - self.load_research_bars(...)
   - self.research_close_frame(...)
+  - self.research_target_driver_frame(overlap="intersection")
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 """
@@ -108,6 +109,13 @@ class BranchEngine(StrategyEngine):
         # close_frame = self.research_close_frame(
         #     driver_tickers=ready_drivers[:3],
         #     require_full_window=True,
+        #     limit=600,
+        # )
+        # target_close, driver_frame = self.research_target_driver_frame(
+        #     driver_tickers=ready_drivers[:3],
+        #     require_full_window=True,
+        #     overlap="intersection",
+        #     require_drivers=True,
         #     limit=600,
         # )
         # Build signals from those aligned bars, then return self.finalize_signals(...)
