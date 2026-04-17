@@ -309,7 +309,17 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  edge_install_mode: {result.edge_install_mode}")
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
+    print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
+    if result.edge_discovery_json_capable is not None:
+        print(f"  edge_discovery_json: {'yes' if result.edge_discovery_json_capable else 'no'}")
+    if result.edge_context_json_capable is not None:
+        print(f"  edge_context_json: {'yes' if result.edge_context_json_capable else 'no'}")
     print("")
+    if result.edge_discovery_json_capable is False or result.edge_context_json_capable is False:
+        print("Warning:")
+        print("  Installed Abel-edge is usable, but some newer CLI/runtime contracts are not available yet.")
+        print("  Run `abel-alpha doctor` for the full compatibility summary before relying on those paths.")
+        print("")
     print("Next:")
     print("  abel-alpha doctor")
     print(f"  {default_activate_command()}")

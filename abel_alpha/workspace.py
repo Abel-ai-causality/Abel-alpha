@@ -199,7 +199,7 @@ Run `abel-alpha doctor` before opening a session.
 - `ready`: you can start research
 - `auth_missing`: complete `causal-abel` OAuth or use the standalone edge login fallback
 - `env_missing` or `edge_missing`: rerun `abel-alpha env init`
-- `ready_legacy_edge`: the workspace is usable, but edge is too old for the full alpha context contract
+- `ready_legacy_edge`: the workspace is usable, but some newer edge contracts are not available yet
 """
 
 
@@ -225,6 +225,8 @@ abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 
 Run `doctor` before `init-session`. If it reports `auth_missing`, complete
 `causal-abel` OAuth or use the standalone edge login fallback first.
+Use `--discover` when you want live Abel discovery immediately; otherwise the
+session starts with a pending discovery placeholder that can be replaced later.
 
 ### Run one research round
 ```bash

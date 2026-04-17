@@ -49,7 +49,7 @@ directory to expose the packaged `abel-alpha` CLI before creating a workspace.
 
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: auth is the only missing piece
-- `ready_legacy_edge` or `auth_missing_legacy_edge`: the installed edge is usable but too old for the full alpha context contract
+- `ready_legacy_edge` or `auth_missing_legacy_edge`: the installed edge is usable, but some newer contracts such as structured discovery or full alpha context injection are not available yet
 - `env_missing` or `edge_missing`: rebuild the workspace runtime with `abel-alpha env init`
 
 If you want a direct `Abel-edge` install as a standalone dependency, you can still use:
@@ -71,9 +71,11 @@ abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 If `causal-edge discover <TICKER>` still reports a missing Abel key after OAuth, `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then shared `causal-abel` auth files from `.agents/skills/causal-abel/.env.skill` and known OpenCode/Codex global skill roots. That lets agent-driven installs reuse the `causal-abel` auth file without copying the key into each workspace. Use `causal-edge login` only when you want the standalone fallback that stores `ABEL_API_KEY` directly for the current project.
 
 Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
+Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Strategy code should prefer the injected `context` object, especially `context["discovery"]` and `context["discovery_path"]`, instead of assuming a relative workspace layout.
 If the installed `Abel-edge` is older and does not support `--context-json` yet, Abel-alpha falls back to compatibility mode: it still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
+`abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
 
 ## Interface Policy
 

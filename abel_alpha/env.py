@@ -27,6 +27,8 @@ class EnvInitResult:
     alpha_source: Path
     edge_install_target: str
     edge_install_mode: str
+    edge_discovery_json_capable: bool | None
+    edge_context_json_capable: bool | None
     alpha_editable: bool
     created_venv: bool
 
@@ -111,6 +113,9 @@ def init_workspace_env(
         edge_install_mode=edge_install_mode,
     )
 
+    edge_discovery_json_capable = probe_edge_discovery_json(python_path, workspace_root)
+    edge_context_json_capable = probe_edge_context_json(python_path, workspace_root)
+
     return EnvInitResult(
         workspace_root=workspace_root,
         venv_path=venv_path,
@@ -118,6 +123,8 @@ def init_workspace_env(
         alpha_source=resolved_alpha_source,
         edge_install_target=edge_install_target,
         edge_install_mode=edge_install_mode,
+        edge_discovery_json_capable=edge_discovery_json_capable,
+        edge_context_json_capable=edge_context_json_capable,
         alpha_editable=alpha_editable,
         created_venv=created_venv,
     )
@@ -204,3 +211,39 @@ def run_command(command: list[str], *, cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         rendered = " ".join(command)
         raise RuntimeError(f"Command failed with exit code {exc.returncode}: {rendered}") from exc
+
+
+def probe_edge_context_json(python_path: Path, cwd: Path) -> bool | None:
+    """Probe whether the installed edge supports the alpha context contract."""
+    completed = subprocess.run(
+        [
+            str(python_path),
+            "-c",
+            (
+                "import inspect\n"
+                "from causal_edge.research.evaluate import run_evaluation\n"
+                "print('context_json' in inspect.signature(run_evaluation).parameters)\n"
+            ),
+        ],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() == "True"
+
+
+def probe_edge_discovery_json(python_path: Path, cwd: Path) -> bool | None:
+    """Probe whether the installed edge discover CLI exposes --json."""
+    completed = subprocess.run(
+        [str(python_path), "-m", "causal_edge.cli", "discover", "--help"],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        return None
+    return "--json" in (completed.stdout or "")

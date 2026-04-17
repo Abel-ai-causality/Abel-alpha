@@ -31,6 +31,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
+                "edge_discovery_json": "not_run",
                 "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
@@ -50,6 +51,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
+                "edge_discovery_json": "not_run",
                 "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
@@ -63,6 +65,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         "python_env": "pass" if python_path.exists() else "fail",
         "causal_edge_import": "not_run",
         "causal_edge_cli": "not_run",
+        "edge_discovery_json": "not_run",
         "edge_context_json": "not_run",
         "auth": "not_run",
         "edge_login_fallback": "not_run",
@@ -130,6 +133,29 @@ print(json.dumps({
 """,
     )
     checks["causal_edge_cli"] = "pass" if cli_check.get("ok") else "fail"
+
+    discovery_contract_check = run_python_json(
+        python_path,
+        root,
+        """
+import json
+import subprocess
+import sys
+
+completed = subprocess.run(
+    [sys.executable, "-m", "causal_edge.cli", "discover", "--help"],
+    capture_output=True,
+    text=True,
+)
+stdout = completed.stdout or ""
+print(json.dumps({
+    "ok": completed.returncode == 0 and "--json" in stdout,
+}))
+""",
+    )
+    checks["edge_discovery_json"] = (
+        "pass" if discovery_contract_check.get("ok") else "fail"
+    )
 
     context_contract_check = run_python_json(
         python_path,
@@ -213,6 +239,7 @@ print(json.dumps({
     checks["auth"] = "pass" if auth_check.get("ok") else "fail"
     checks["edge_login_fallback"] = "pass" if checks["causal_edge_cli"] == "pass" else "fail"
     result["auth"] = auth_check
+    result["auth_scope"] = classify_auth_scope(root, auth_check)
 
     if not auth_check.get("ok"):
         result.update(
@@ -248,8 +275,14 @@ print(json.dumps({
         result.update(
             {
                 "status": "ready_legacy_edge",
-                "summary": "Workspace is usable, but the installed Abel-edge does not yet support the alpha context contract.",
-                "next_step": "Upgrade Abel-edge, then run `abel-alpha init-session --ticker <TICKER> --exp-id <session-id>`.",
+                "summary": (
+                    "Workspace is usable, but the installed Abel-edge is missing one or more "
+                    "newer CLI/runtime contracts such as `discover --json` or the alpha context contract."
+                ),
+                "next_step": (
+                    "You can continue with `abel-alpha init-session`, but upgrade Abel-edge before "
+                    "depending on full structured discovery or `run_strategy(context=...)`."
+                ),
             }
         )
     return result
@@ -259,6 +292,26 @@ def doctor_exit_code(result: dict[str, object]) -> int:
     """Return the CLI exit code for a doctor result."""
     status = str(result.get("status") or "").strip()
     return 0 if status in SUCCESS_STATUSES else 1
+
+
+def classify_auth_scope(root: Path, auth_result: dict[str, object]) -> str:
+    """Classify whether the resolved auth came from the workspace or a shared source."""
+    if not auth_result.get("ok"):
+        return "missing"
+    source = str(auth_result.get("source") or "").strip()
+    path_value = auth_result.get("path")
+    if source == "workspace_env":
+        return "workspace_local"
+    if source == "env_var":
+        return "process_env"
+    if source == "shared_auth_file" and isinstance(path_value, str) and path_value.strip():
+        auth_path = Path(path_value).expanduser().resolve()
+        try:
+            auth_path.relative_to(root)
+        except ValueError:
+            return "shared_external"
+        return "workspace_local"
+    return "unknown"
 
 
 def render_doctor_report(result: dict[str, object]) -> str:
@@ -288,6 +341,9 @@ def render_doctor_report(result: dict[str, object]) -> str:
             f"{auth.get('source', 'unknown')}"
             + (f" ({auth.get('path')})" if auth.get("path") else "")
         )
+    auth_scope = result.get("auth_scope")
+    if auth_scope:
+        lines.append(f"Auth scope: {auth_scope}")
     lines.append(f"Next step: {result.get('next_step', '')}")
     return "\n".join(lines)
 

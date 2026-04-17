@@ -78,20 +78,24 @@ Treat `abel-alpha doctor` as the gate before research:
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: install or authorize `causal-abel`, then rerun `doctor`
 - `ready_legacy_edge` or `auth_missing_legacy_edge`: edge is usable but too old
-  for the full alpha context contract; upgrade edge before relying on
-  `run_strategy(context=...)`
+  for some newer contracts such as structured discovery or full
+  `run_strategy(context=...)` injection
 - `env_missing` or `edge_missing`: repair the workspace runtime with
   `abel-alpha env init`
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
 when you want the live Abel discovery persisted into `discovery.json` and the event trail.
+Without `--discover`, `init-session` creates the session immediately and writes a
+pending discovery placeholder.
 The session fixes one backtest `start`; `run-branch` leaves `end` unset so each run evaluates on the latest available data.
 Each `run-branch` also writes `outputs/<round-id>-alpha-context.json` and injects it into
 `causal-edge evaluate --context-json`, so strategy code should prefer `context["discovery"]`
 and `context["discovery_path"]` over hard-coded relative paths.
 If the installed `Abel-edge` is older and does not support that argument yet, Abel-alpha
 falls back to compatibility mode and `abel-alpha doctor` will report the missing capability.
+`abel-alpha doctor` also reports whether auth came from the local workspace,
+process environment, or a shared external auth file.
 Your job: write the strategy implementation.
 
 Use the packaged CLI as the primary interface. The old
