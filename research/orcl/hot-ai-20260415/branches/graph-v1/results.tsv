@@ -1,2 +1,0 @@
-exp_id	ticker	branch_id	round_id	decision	lo_adj	ic	omega	sharpe	max_dd	pnl	K	score	verdict	mode	description	result_path	report_path
-hot-ai-20260415	ORCL	graph-v1	round-001	keep	4.305	0.0000	1.969	4.326	-0.0544	141.8	1	7/7	PASS	explore	baseline discovery-driven graph vote	branches\graph-v1\outputs\round-001-edge-result.json	branches\graph-v1\outputs\round-001-edge-validation.md
