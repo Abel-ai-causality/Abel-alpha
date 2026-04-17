@@ -69,13 +69,14 @@ STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
 
 Final strategy output must satisfy abs(position) <= 1.
 Default backtest behavior should use the provided start date and treat end=None as the latest available date.
+If provided, context contains workspace/session/branch/discovery metadata from Abel-alpha.
 """
 
 import numpy as np
 import pandas as pd
 
 
-def run_strategy(*, start=None, end=None):
+def run_strategy(*, start=None, end=None, context=None):
     raise NotImplementedError("Fill in run_strategy()")
 '''
 
@@ -434,9 +435,35 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
             f"{ticker.upper()} --exp-id <exp-id> --discover`."
         ) from exc
 
+    try:
+        from causal_edge.plugins.abel.discover import discover_graph_payload
+
+        payload = discover_graph_payload(ticker.upper(), mode="all", limit=limit)
+        payload["backtest"] = {"start": DEFAULT_BACKTEST_START}
+        payload.setdefault("created_at", _now())
+        return payload
+    except ImportError:
+        pass
+    except AttributeError:
+        pass
+
+    # Fallback for older causal-edge builds that still expose text-only discovery.
     parents_output = discover_graph_nodes(ticker.upper(), mode="parents", limit=limit)
     blanket_output = discover_graph_nodes(ticker.upper(), mode="mb", limit=limit)
+    return build_discovery_payload_from_text(
+        ticker=ticker.upper(),
+        parents_output=parents_output,
+        blanket_output=blanket_output,
+    )
 
+
+def build_discovery_payload_from_text(
+    *,
+    ticker: str,
+    parents_output: str,
+    blanket_output: str,
+) -> dict:
+    """Build the standard discovery payload from legacy text output."""
     parents = parse_discovery_items(parents_output)
     blanket_items = parse_discovery_items(blanket_output)
     parent_keys = {(item["ticker"], item["field"]) for item in parents}
@@ -562,7 +589,20 @@ def run_branch_round(args: argparse.Namespace) -> int:
     result_path = branch / "outputs" / f"{round_id}-edge-result.json"
     report_path = branch / "outputs" / f"{round_id}-edge-validation.md"
     handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
+    context_path = branch / "outputs" / f"{round_id}-alpha-context.json"
     backtest_start = _get_backtest_start(discovery)
+    context_path.write_text(
+        json.dumps(
+            build_branch_context(
+                branch=branch,
+                session=session,
+                discovery=discovery,
+                backtest_start=backtest_start,
+            ),
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     python_bin = args.python_bin or resolve_default_python_bin(branch)
     command = [
@@ -572,6 +612,8 @@ def run_branch_round(args: argparse.Namespace) -> int:
         "evaluate",
         "--workdir",
         str(branch),
+        "--context-json",
+        str(context_path),
         "--output-json",
         str(result_path),
         "--output-md",
@@ -1044,6 +1086,25 @@ def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
         load_profile(profile_name),
     )
     return "keep" if decision == "KEEP" else "discard"
+
+
+def build_branch_context(
+    *,
+    branch: Path,
+    session: Path,
+    discovery: dict,
+    backtest_start: str,
+) -> dict:
+    """Build the structured context passed into causal-edge evaluate."""
+    workspace_root = find_workspace_root(branch)
+    return {
+        "workspace_root": str(workspace_root) if workspace_root is not None else None,
+        "session_dir": str(session.resolve()),
+        "branch_dir": str(branch.resolve()),
+        "discovery_path": str((session / "discovery.json").resolve()),
+        "ticker": discovery.get("ticker", session.parent.name.upper()),
+        "backtest_start": backtest_start,
+    }
 
 
 def branch_progression(rows: list[dict[str, str]]) -> str:
