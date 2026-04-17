@@ -8,12 +8,21 @@ python -m venv .venv
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -e .
+abel-alpha workspace init my-lab
+cd my-lab
+abel-alpha workspace status
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --backtest-start 2020-01-01
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 abel-alpha status --session research/tsla/tsla-v1
 abel-alpha check --session research/tsla/tsla-v1 --strict
 ```
+
+`abel-alpha workspace init` creates the standard workspace scaffold and manifest.
+The package install still happens from the `Abel-alpha` source checkout; the
+workspace is where research artifacts live. Inside a workspace,
+`abel-alpha init-session` defaults to the manifest-backed `research/` root
+instead of relying on an implicit current-directory layout.
 
 The legacy `python scripts/research_narrative.py ...` entrypoint remains available as a compatibility path while the packaged CLI becomes the default.
 

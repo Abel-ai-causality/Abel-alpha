@@ -3,9 +3,11 @@
 ## Quick Start
 
 ```bash
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+abel-alpha init-session --ticker <TICKER> --exp-id <exp-id>
 # → research/<ticker>/<exp_id>/discovery.json created for Abel-alpha organization
 ```
+
+Legacy compatibility remains available through `python scripts/research_narrative.py ...` inside the source checkout.
 
 ## The Multihop Protocol
 

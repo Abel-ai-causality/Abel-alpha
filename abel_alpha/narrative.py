@@ -1,22 +1,20 @@
-"""Public package surface for the existing narrative CLI."""
+"""Public package surface for the packaged narrative CLI."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from abel_alpha._legacy import load_legacy_module
+from abel_alpha import narrative_impl as _impl
 
 
 def main() -> int:
-    """Run the existing narrative CLI."""
-    module = load_legacy_module()
-    return module.main()
+    """Run the packaged narrative CLI."""
+    return _impl.main()
 
 
 def __getattr__(name: str) -> Any:
-    """Expose legacy helpers through the package namespace during migration."""
-    module = load_legacy_module()
+    """Expose narrative helpers through the package namespace during migration."""
     try:
-        return getattr(module, name)
+        return getattr(_impl, name)
     except AttributeError as exc:
         raise AttributeError(f"module 'abel_alpha.narrative' has no attribute {name!r}") from exc

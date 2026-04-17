@@ -24,6 +24,9 @@ python -m venv .venv
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -e .
+abel-alpha workspace init my-lab
+cd my-lab
+abel-alpha workspace status
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
 # use -g for a global install in the current agent platform
@@ -34,6 +37,12 @@ abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -
 abel-alpha status --session research/<ticker>/<exp-id>
 abel-alpha check --session research/<ticker>/<exp-id> --strict
 ```
+
+`abel-alpha workspace init` creates the standard scaffold and manifest. Install
+the package from the `Abel-alpha` source checkout first, then use the workspace
+for research artifacts. Inside a workspace, `abel-alpha init-session` will
+default to the configured `research_root` instead of guessing from the current
+directory layout.
 
 The legacy `python scripts/research_narrative.py ...` path remains supported as a compatibility entrypoint during the CLI migration.
 
@@ -68,7 +77,7 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 **Sequential (dependent — compounding requires order):**
 - Experiment loop: exp002 depends on exp001's result. Serial, not parallel.
 - KEEP decision: validate, compare vs baseline, THEN record. Cannot record before verdict.
-- Process record: use the Abel-alpha script to keep `events.tsv`, round notes, README, thesis, and memory in sync.
+- Process record: use the `abel-alpha` CLI to keep `events.tsv`, round notes, README, thesis, and memory in sync.
 
 **In practice:** use Agent tool to dispatch parallel research across assets. Within each asset, experiments are serial. `causal-edge` handles IO parallelism (discovery, dashboard) internally.
 
