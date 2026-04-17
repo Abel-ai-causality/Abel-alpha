@@ -27,6 +27,8 @@ pip install -e .
 abel-alpha workspace init my-lab
 cd my-lab
 abel-alpha workspace status
+abel-alpha env init
+abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
 # use -g for a global install in the current agent platform
@@ -40,9 +42,10 @@ abel-alpha check --session research/<ticker>/<exp-id> --strict
 
 `abel-alpha workspace init` creates the standard scaffold and manifest. Install
 the package from the `Abel-alpha` source checkout first, then use the workspace
-for research artifacts. Inside a workspace, `abel-alpha init-session` will
-default to the configured `research_root` instead of guessing from the current
-directory layout.
+for research artifacts. `abel-alpha env init` prepares the workspace `.venv`
+and prefers a local `Abel-edge` source tree when one is available. Inside a
+workspace, `abel-alpha init-session` will default to the configured
+`research_root` instead of guessing from the current directory layout.
 
 The legacy `python scripts/research_narrative.py ...` path remains supported as a compatibility entrypoint during the CLI migration.
 

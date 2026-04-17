@@ -48,6 +48,16 @@ def resolve_workspace_paths(root: Path, manifest: dict | None = None) -> dict[st
     }
 
 
+def resolve_runtime_python(root: Path, manifest: dict | None = None) -> Path:
+    """Resolve the configured runtime python path to an absolute path."""
+    manifest = manifest or load_workspace_manifest(root)
+    runtime = manifest.get("runtime") or {}
+    configured = Path(str(runtime.get("python", default_python_path())))
+    if configured.is_absolute():
+        return configured
+    return root / configured
+
+
 def scaffold_workspace(name: str, *, target_root: Path | None = None) -> Path:
     """Create a new Abel-alpha workspace directory with the standard layout."""
     root = (target_root or Path.cwd() / name).resolve()
@@ -122,6 +132,7 @@ def render_workspace_status(root: Path, manifest: dict | None = None) -> str:
     """Render a human-readable workspace status summary."""
     manifest = manifest or load_workspace_manifest(root)
     resolved = resolve_workspace_paths(root, manifest)
+    runtime_python = resolve_runtime_python(root, manifest)
     lines = [
         f"Workspace: {manifest.get('workspace', {}).get('name', root.name)}",
         f"Root: {root}",
@@ -131,7 +142,8 @@ def render_workspace_status(root: Path, manifest: dict | None = None) -> str:
         f"Cache root: {resolved['cache_root']}",
         f"Logs root: {resolved['logs_root']}",
         f"Venv: {resolved['venv']}",
-        f"Runtime python: {manifest.get('runtime', {}).get('python', default_python_path())}",
+        f"Runtime python: {runtime_python}",
+        f"Runtime python exists: {'yes' if runtime_python.exists() else 'no'}",
     ]
     return "\n".join(lines)
 
@@ -153,16 +165,15 @@ This is an Abel-alpha research workspace.
 
 ```bash
 abel-alpha workspace status
-python -m venv .venv
+abel-alpha env init
+abel-alpha doctor
 {default_activate_command()}
-python -m pip install --upgrade pip
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1
 ```
 
-Until `abel-alpha env init` lands, install `Abel-alpha` into `.venv` from your
-local source checkout or the skill-provided source on your machine. If you want
-live Abel discovery, install `causal-abel`, complete its OAuth flow, then rerun
-`abel-alpha init-session --discover`.
+`abel-alpha env init` prepares the local `.venv` and installs `Abel-alpha`
+plus `Abel-edge`. If you want live Abel discovery, install `causal-abel`,
+complete its OAuth flow, then rerun `abel-alpha init-session --discover`.
 """
 
 
@@ -175,10 +186,12 @@ def render_workspace_agents() -> str:
 ### Check whether this directory is a valid workspace
 ```bash
 abel-alpha workspace status
+abel-alpha doctor
 ```
 
 ### Start a new exploration session
 ```bash
+abel-alpha env init
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 ```

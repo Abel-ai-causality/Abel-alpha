@@ -16,11 +16,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from abel_alpha.doctor import render_doctor_report, run_doctor
+from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     build_default_manifest,
     default_activate_command,
     find_workspace_root,
     load_workspace_manifest,
+    resolve_runtime_python,
     render_workspace_status,
     resolve_workspace_paths,
     scaffold_workspace,
@@ -78,7 +81,7 @@ def run_strategy(*, start=None, end=None):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Abel-alpha narrative layer")
+    parser = argparse.ArgumentParser(description="Abel-alpha workspace CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     workspace = sub.add_parser("workspace", help="Create or inspect an Abel-alpha workspace")
@@ -97,6 +100,49 @@ def main() -> int:
         "--path",
         default=".",
         help="Directory to inspect for the nearest workspace root",
+    )
+
+    env_parser = sub.add_parser("env", help="Manage the local workspace Python environment")
+    env_sub = env_parser.add_subparsers(dest="env_command", required=True)
+    env_init = env_sub.add_parser("init", help="Create the workspace venv and install dependencies")
+    env_init.add_argument(
+        "--path",
+        default=".",
+        help="Directory inside the target workspace",
+    )
+    env_init.add_argument(
+        "--python",
+        dest="base_python",
+        default=None,
+        help="Base interpreter used to create the workspace venv",
+    )
+    env_init.add_argument(
+        "--alpha-source",
+        default=None,
+        help="Local Abel-alpha source tree used for installation",
+    )
+    env_init.add_argument(
+        "--edge-source",
+        default=None,
+        help="Optional local Abel-edge source tree used for installation",
+    )
+    env_init.add_argument(
+        "--no-editable",
+        action="store_true",
+        help="Install local source trees in regular mode instead of editable mode",
+    )
+
+    doctor = sub.add_parser("doctor", help="Check workspace readiness")
+    doctor.add_argument(
+        "--path",
+        default=".",
+        help="Directory inside the target workspace",
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Emit machine-readable JSON output",
     )
 
     init_session = sub.add_parser("init-session", help="Create a narrative session")
@@ -136,7 +182,11 @@ def main() -> int:
     run_branch.add_argument("--summary", default="")
     run_branch.add_argument("--next-step", default="")
     run_branch.add_argument("--action", action="append", default=[])
-    run_branch.add_argument("--python-bin", default=sys.executable)
+    run_branch.add_argument(
+        "--python-bin",
+        default=None,
+        help="Interpreter used to run causal-edge evaluate (defaults to the workspace python when available)",
+    )
 
     render = sub.add_parser("render", help="Render summaries for a session")
     render.add_argument("--session", required=True)
@@ -152,6 +202,10 @@ def main() -> int:
 
     if args.command == "workspace":
         return handle_workspace_command(args)
+    if args.command == "env":
+        return handle_env_command(args)
+    if args.command == "doctor":
+        return handle_doctor_command(args)
     if args.command == "init-session":
         init_session_dir(
             args.ticker,
@@ -163,18 +217,18 @@ def main() -> int:
         )
         return 0
     if args.command == "init-branch":
-        init_branch_dir(Path(args.session), args.branch_id)
+        init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
         return 0
     if args.command == "run-branch":
         return run_branch_round(args)
     if args.command == "render":
-        render_session(Path(args.session))
+        render_session(resolve_workspace_arg_path(args.session))
         return 0
     if args.command == "status":
-        print_status(Path(args.session))
+        print_status(resolve_workspace_arg_path(args.session))
         return 0
     if args.command == "check":
-        return check_session(Path(args.session), strict=args.strict)
+        return check_session(resolve_workspace_arg_path(args.session), strict=args.strict)
     return 1
 
 
@@ -192,10 +246,8 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print("Next:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
-        print("  python -m venv .venv")
-        print(f"  {default_activate_command()}")
-        print("  python -m pip install --upgrade pip")
-        print("  # install Abel-alpha into .venv from your local source or skill source")
+        print("  abel-alpha env init")
+        print("  abel-alpha doctor")
         return 0
     if args.workspace_command == "status":
         start = Path(args.path).expanduser().resolve()
@@ -209,15 +261,69 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
     return 1
 
 
+def handle_env_command(args: argparse.Namespace) -> int:
+    if args.env_command != "init":
+        return 1
+    result = init_workspace_env(
+        start=Path(args.path).expanduser(),
+        base_python=args.base_python,
+        alpha_source=args.alpha_source,
+        edge_source=args.edge_source,
+        editable=not args.no_editable,
+    )
+    print(f"Workspace environment ready at {result.workspace_root}")
+    print(f"  venv: {result.venv_path}")
+    print(f"  python: {result.python_path}")
+    print(f"  alpha_source: {result.alpha_source}")
+    print(f"  edge_source: {result.edge_source or 'package dependency'}")
+    print(f"  install_mode: {'editable' if result.editable else 'regular'}")
+    print("")
+    print("Next:")
+    print("  abel-alpha doctor")
+    print(f"  {default_activate_command()}")
+    return 0
+
+
+def handle_doctor_command(args: argparse.Namespace) -> int:
+    result = run_doctor(Path(args.path).expanduser())
+    if args.json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        print(render_doctor_report(result))
+    return 0 if result.get("status") == "ready" else 1
+
+
 def resolve_session_root(root_arg: str | None) -> Path:
     """Resolve the session root from an explicit argument or current workspace."""
     if root_arg:
-        return Path(root_arg).expanduser()
+        return resolve_workspace_arg_path(root_arg)
     workspace_root = find_workspace_root()
     if workspace_root is not None:
         manifest = load_workspace_manifest(workspace_root)
         return resolve_workspace_paths(workspace_root, manifest)["research_root"]
     return Path("research")
+
+
+def resolve_workspace_arg_path(value: str) -> Path:
+    """Resolve a CLI path argument relative to the current workspace when possible."""
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    workspace_root = find_workspace_root()
+    if workspace_root is not None:
+        return workspace_root / path
+    return path
+
+
+def resolve_default_python_bin(branch: Path) -> str:
+    """Resolve the interpreter used for edge evaluation."""
+    workspace_root = find_workspace_root(branch)
+    if workspace_root is not None:
+        manifest = load_workspace_manifest(workspace_root)
+        python_path = resolve_runtime_python(workspace_root, manifest)
+        if python_path.exists():
+            return str(python_path)
+    return sys.executable
 
 
 def init_session_dir(
@@ -441,7 +547,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
 
 
 def run_branch_round(args: argparse.Namespace) -> int:
-    branch = Path(args.branch).resolve()
+    branch = resolve_workspace_arg_path(args.branch).resolve()
     session = branch.parent.parent
     discovery = load_discovery(session)
     rows = read_tsv_rows(branch / "results.tsv")
@@ -451,8 +557,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
     handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
     backtest_start = _get_backtest_start(discovery)
 
+    python_bin = args.python_bin or resolve_default_python_bin(branch)
     command = [
-        args.python_bin,
+        python_bin,
         "-m",
         "causal_edge.cli",
         "evaluate",
