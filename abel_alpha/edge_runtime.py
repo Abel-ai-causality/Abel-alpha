@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -109,6 +111,19 @@ def probe_edge_context_json(python_path: Path | str, cwd: Path) -> bool | None:
     if completed.returncode != 0:
         return None
     return completed.stdout.strip() == "True"
+
+
+def build_workspace_runtime_env(
+    workspace_root: Path,
+    *,
+    base: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build a deterministic runtime environment for Abel-edge subprocesses."""
+    env = dict(os.environ if base is None else base)
+    workspace_env = (workspace_root / ".env").resolve()
+    if not env.get("ABEL_AUTH_ENV_FILE") and workspace_env.exists():
+        env["ABEL_AUTH_ENV_FILE"] = str(workspace_env)
+    return env
 
 
 def probe_abel_auth(python_path: Path | str, cwd: Path) -> dict[str, object]:

@@ -17,13 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
-from abel_alpha.edge_runtime import probe_edge_context_json
+from abel_alpha.edge_runtime import build_workspace_runtime_env, probe_edge_context_json
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     build_default_manifest,
     default_activate_command,
     find_workspace_root,
     load_workspace_manifest,
+    resolve_workspace_env_file,
     resolve_runtime_python,
     render_workspace_status,
     resolve_workspace_paths,
@@ -72,6 +73,8 @@ Final strategy output must satisfy abs(position) <= 1.
 Default backtest behavior should use the provided start date and treat end=None as the latest available date.
 If provided, context contains workspace/session/branch/discovery metadata from Abel-alpha.
 Prefer context["discovery"] and context["discovery_path"] over hard-coded relative paths.
+If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
+Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 """
 
 import numpy as np
@@ -133,6 +136,11 @@ def main() -> int:
         "--edge-source",
         default=None,
         help="Optional local Abel-edge source tree override for development",
+    )
+    env_init.add_argument(
+        "--runtime-python",
+        default=None,
+        help="Use an existing interpreter instead of creating the workspace venv",
     )
     env_init.add_argument(
         "--no-editable",
@@ -246,6 +254,10 @@ def main() -> int:
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
         print("")
+        print("Reminders:")
+        print("  If you fetch bars, pass an explicit `limit=...`.")
+        print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
+        print("")
         print("Next:")
         print(f"  edit {branch / 'strategy.py'}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
@@ -301,16 +313,20 @@ def handle_env_command(args: argparse.Namespace) -> int:
         alpha_source=args.alpha_source,
         edge_spec=args.edge_spec,
         edge_source=args.edge_source,
+        runtime_python=args.runtime_python,
         alpha_editable=not args.no_editable,
     )
     print(f"Workspace environment ready at {result.workspace_root}")
     print(f"  venv: {result.venv_path}")
     print(f"  python: {result.python_path}")
     print(f"  alpha_source: {result.alpha_source}")
+    print(f"  runtime_mode: {result.runtime_mode}")
     print(f"  edge_install_mode: {result.edge_install_mode}")
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
     print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
+    if result.runtime_mode == "existing_python":
+        print("  runtime_note: using an existing interpreter instead of creating the workspace .venv")
     if result.edge_discovery_json_capable is not None:
         print(f"  edge_discovery_json: {'yes' if result.edge_discovery_json_capable else 'no'}")
     if result.edge_context_json_capable is not None:
@@ -459,6 +475,12 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
         ) from exc
 
     from causal_edge.plugins.abel.discover import discover_graph_nodes
+    workspace_root = find_workspace_root()
+    if workspace_root is not None:
+        os.environ.setdefault(
+            "ABEL_AUTH_ENV_FILE",
+            str(resolve_workspace_env_file(workspace_root).resolve()),
+        )
 
     try:
         require_api_key()
@@ -618,6 +640,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
 def run_branch_round(args: argparse.Namespace) -> int:
     branch = resolve_workspace_arg_path(args.branch).resolve()
     session = branch.parent.parent
+    workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
     rows = read_tsv_rows(branch / "results.tsv")
     round_id = f"round-{len(rows) + 1:03d}"
@@ -662,7 +685,18 @@ def run_branch_round(args: argparse.Namespace) -> int:
         command[6:6] = ["--context-json", str(context_path)]
     else:
         context_mode = "recorded_only_legacy_edge"
-    completed = subprocess.run(command, cwd=session, capture_output=True, text=True)
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
     if not result_path.exists():
@@ -671,6 +705,12 @@ def run_branch_round(args: argparse.Namespace) -> int:
             "Check the command output above and rerun after fixing the evaluation error.",
             file=sys.stderr,
         )
+        if workspace_root is not None:
+            print(
+                f"Alpha expected workspace auth at {resolve_workspace_env_file(workspace_root)} "
+                "and exported it through ABEL_AUTH_ENV_FILE for this run.",
+                file=sys.stderr,
+            )
         return completed.returncode or 1
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))

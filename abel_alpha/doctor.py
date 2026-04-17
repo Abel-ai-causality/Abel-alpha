@@ -15,6 +15,7 @@ from abel_alpha.workspace import (
     find_workspace_root,
     load_workspace_manifest,
     resolve_edge_spec,
+    resolve_workspace_env_file,
     resolve_runtime_python,
 )
 
@@ -79,6 +80,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     result: dict[str, object] = {
         "workspace_root": str(root),
         "python_path": str(python_path),
+        "workspace_env_file": str(resolve_workspace_env_file(root)),
         "edge_install_target": resolve_edge_spec(root, manifest),
         "checks": checks,
     }
@@ -88,7 +90,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
             {
                 "status": "env_missing",
                 "summary": f"Workspace python does not exist at {python_path}",
-                "next_step": "abel-alpha env init",
+                "next_step": "abel-alpha env init  # or use --runtime-python /path/to/python",
             }
         )
         return result
@@ -100,7 +102,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
             {
                 "status": "edge_missing",
                 "summary": f"Workspace python cannot import causal_edge: {import_check.get('error', 'unknown error')}",
-                "next_step": "abel-alpha env init",
+                "next_step": "abel-alpha env init  # or use --runtime-python /path/to/python",
             }
         )
         return result
@@ -208,6 +210,9 @@ def render_doctor_report(result: dict[str, object]) -> str:
     edge_install_target = result.get("edge_install_target")
     if edge_install_target:
         lines.append(f"Edge install target: {edge_install_target}")
+    workspace_env_file = result.get("workspace_env_file")
+    if workspace_env_file:
+        lines.append(f"Workspace env file: {workspace_env_file}")
     lines.append("Checks:")
     checks = result.get("checks", {})
     if isinstance(checks, dict):

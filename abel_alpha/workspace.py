@@ -54,6 +54,11 @@ def resolve_workspace_paths(root: Path, manifest: dict | None = None) -> dict[st
     }
 
 
+def resolve_workspace_env_file(root: Path) -> Path:
+    """Resolve the workspace-local auth environment file path."""
+    return root / ".env"
+
+
 def resolve_runtime_python(root: Path, manifest: dict | None = None) -> Path:
     """Resolve the configured runtime python path to an absolute path."""
     manifest = manifest or load_workspace_manifest(root)
@@ -152,6 +157,7 @@ def render_workspace_status(root: Path, manifest: dict | None = None) -> str:
         f"Workspace: {manifest.get('workspace', {}).get('name', root.name)}",
         f"Root: {root}",
         f"Manifest: {root / MANIFEST_NAME}",
+        f"Workspace env file: {resolve_workspace_env_file(root)}",
         f"Research root: {resolved['research_root']}",
         f"Docs root: {resolved['docs_root']}",
         f"Cache root: {resolved['cache_root']}",
@@ -191,6 +197,8 @@ abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 plus `Abel-edge`. By default it installs `Abel-edge` from GitHub `main` until
 formal releases exist. If you want live Abel discovery, install `causal-abel`,
 complete its OAuth flow, then rerun `abel-alpha init-session --discover`.
+If your environment cannot create a new venv, point alpha at an existing
+interpreter with `abel-alpha env init --runtime-python /path/to/python`.
 
 ## Readiness gate
 
@@ -230,6 +238,8 @@ Run `doctor` before `init-session`. If it reports `auth_missing`, complete
 `causal-abel` OAuth or use the standalone edge login fallback first.
 Use `--discover` when you want live Abel discovery immediately; otherwise the
 session starts with a pending discovery placeholder that can be replaced later.
+If `causal-edge login` writes a token into the workspace `.env`, alpha-managed
+commands will reuse that file automatically.
 If `doctor` reports `ready_legacy_edge`, the workspace is using an older custom
 edge runtime and should be upgraded before depending on newer structured
 contracts.

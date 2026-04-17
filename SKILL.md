@@ -38,6 +38,8 @@ OAuth flow, and let `causal-edge` reuse that shared auth before falling back to
 `causal-edge login`. If it still reports a missing key, check
 `python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or
 point `ABEL_AUTH_ENV_FILE` at the exported auth file.
+If `causal-edge login` writes a token into the workspace `.env`, alpha-managed
+session and branch runs will export that file through `ABEL_AUTH_ENV_FILE`.
 
 ```bash
 python -m venv .venv
@@ -68,6 +70,9 @@ and installs `Abel-edge` from GitHub `main` by default until formal releases
 exist. Use `--edge-source` only for local development overrides. Inside a
 workspace, `abel-alpha init-session` resolves the configured `research_root`
 instead of guessing from the current directory layout.
+If the selected Python cannot create a venv in a locked-down environment, use
+`abel-alpha env init --runtime-python /path/to/python` to point alpha at an
+existing interpreter instead.
 
 Treat `abel-alpha doctor` as the gate before research:
 
@@ -95,6 +100,9 @@ Abel-alpha still records the alpha context artifact and `abel-alpha doctor`
 will report the missing capability.
 `abel-alpha doctor` also reports whether auth came from the local workspace,
 process environment, or a shared external auth file.
+When writing the first strategy, pass an explicit `limit=...` if you fetch
+bars, and avoid blanket `dropna()` on a joined frame before confirming the
+target ticker still remains present.
 Your job: write the strategy implementation.
 
 Use the packaged CLI as the primary interface. The old

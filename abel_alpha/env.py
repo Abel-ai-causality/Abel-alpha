@@ -32,6 +32,7 @@ class EnvInitResult:
     edge_context_json_capable: bool | None
     alpha_editable: bool
     created_venv: bool
+    runtime_mode: str
 
 
 def init_workspace_env(
@@ -41,6 +42,7 @@ def init_workspace_env(
     alpha_source: str | Path | None = None,
     edge_spec: str | None = None,
     edge_source: str | Path | None = None,
+    runtime_python: str | Path | None = None,
     alpha_editable: bool = True,
 ) -> EnvInitResult:
     """Create the workspace venv and install Abel-alpha plus dependencies."""
@@ -53,13 +55,35 @@ def init_workspace_env(
     manifest = load_workspace_manifest(workspace_root)
     paths = resolve_workspace_paths(workspace_root, manifest)
     venv_path = paths["venv"]
-    python_path = resolve_runtime_python(workspace_root, manifest)
     created_venv = False
+    runtime_mode = "managed_venv"
 
-    if not python_path.exists():
-        interpreter = base_python or sys.executable
-        run_command([interpreter, "-m", "venv", str(venv_path)], cwd=workspace_root)
-        created_venv = True
+    if runtime_python is not None:
+        python_path = record_existing_runtime_python(
+            workspace_root,
+            manifest,
+            Path(runtime_python).expanduser(),
+        )
+        runtime_mode = "existing_python"
+    else:
+        python_path = resolve_runtime_python(workspace_root, manifest)
+        if not python_path.exists():
+            interpreter = base_python or sys.executable
+            try:
+                run_command(
+                    [interpreter, "-m", "venv", str(venv_path)],
+                    cwd=workspace_root,
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "Failed to create the workspace virtual environment. "
+                    "This usually means the selected Python cannot run `python -m venv` "
+                    "(for example missing `python3-venv` or `ensurepip`). "
+                    "In locked-down environments, create or choose an existing interpreter "
+                    "and rerun `abel-alpha env init --runtime-python /path/to/python`.\n\n"
+                    f"Underlying error:\n{exc}"
+                ) from exc
+            created_venv = True
 
     resolved_alpha_source = resolve_alpha_source(alpha_source)
     resolved_edge_source = resolve_edge_source(explicit=edge_source)
@@ -128,6 +152,7 @@ def init_workspace_env(
         edge_context_json_capable=edge_context_json_capable,
         alpha_editable=alpha_editable,
         created_venv=created_venv,
+        runtime_mode=runtime_mode,
     )
 
 
@@ -198,6 +223,29 @@ def record_edge_install_target(
     write_workspace_manifest(workspace_root, manifest)
 
 
+def record_existing_runtime_python(
+    workspace_root: Path,
+    manifest: dict,
+    runtime_python: Path,
+) -> Path:
+    """Persist an explicit existing interpreter path into the workspace manifest."""
+    resolved = runtime_python.resolve()
+    if not resolved.exists():
+        raise RuntimeError(f"Existing runtime python does not exist: {resolved}")
+    runtime = manifest.setdefault("runtime", {})
+    runtime["python"] = make_manifest_path(workspace_root, resolved)
+    write_workspace_manifest(workspace_root, manifest)
+    return resolved
+
+
+def make_manifest_path(workspace_root: Path, path: Path) -> str:
+    """Serialize a path into the manifest, preferring workspace-relative form."""
+    try:
+        return str(path.relative_to(workspace_root))
+    except ValueError:
+        return str(path)
+
+
 def validate_source_tree(path: Path, label: str) -> Path:
     """Validate that a local source path looks like an installable Python project."""
     if not (path / "pyproject.toml").exists():
@@ -208,7 +256,17 @@ def validate_source_tree(path: Path, label: str) -> Path:
 def run_command(command: list[str], *, cwd: Path) -> None:
     """Run a command and raise a readable error on failure."""
     try:
-        subprocess.run(command, cwd=cwd, check=True)
+        subprocess.run(
+            command,
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     except subprocess.CalledProcessError as exc:
         rendered = " ".join(command)
-        raise RuntimeError(f"Command failed with exit code {exc.returncode}: {rendered}") from exc
+        details = (exc.stderr or exc.stdout or "").strip()
+        message = f"Command failed with exit code {exc.returncode}: {rendered}"
+        if details:
+            message = f"{message}\n{details}"
+        raise RuntimeError(message) from exc
