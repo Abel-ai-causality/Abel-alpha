@@ -50,6 +50,7 @@ RESULTS_HEADER = [
     "description",
     "result_path",
     "report_path",
+    "handoff_path",
 ]
 
 STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
@@ -376,6 +377,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     round_id = f"round-{len(rows) + 1:03d}"
     result_path = branch / "outputs" / f"{round_id}-edge-result.json"
     report_path = branch / "outputs" / f"{round_id}-edge-validation.md"
+    handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
     backtest_start = _get_backtest_start(discovery)
 
     command = [
@@ -389,6 +391,8 @@ def run_branch_round(args: argparse.Namespace) -> int:
         str(result_path),
         "--output-md",
         str(report_path),
+        "--output-handoff",
+        str(handoff_path),
         "--start",
         backtest_start,
     ]
@@ -442,6 +446,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
                 "description": args.description,
                 "result_path": str(result_path.relative_to(session)),
                 "report_path": str(report_path.relative_to(session)),
+                "handoff_path": str(handoff_path.relative_to(session)),
             },
         )
         append_tsv_row(
@@ -551,6 +556,12 @@ def check_session(session: Path, *, strict: bool) -> int:
                 failures.append(
                     f"{branch_dir.name}: missing edge report {row.get('report_path', '')}"
                 )
+            if not (session / row.get("handoff_path", "")).exists():
+                failures.append(
+                    f"{branch_dir.name}: missing edge handoff {row.get('handoff_path', '')}"
+                )
+            if strict:
+                validate_edge_handoff(session, branch_dir.name, row, failures)
         if strict:
             for text_path in (
                 branch_dir / "README.md",
@@ -826,16 +837,28 @@ def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
     if baseline is None:
         return "keep"
 
-    current = result.get("metrics", {})
-    lo_ok = current.get("lo_adjusted", 0) >= float(baseline.get("lo_adj") or 0)
-    sharpe_ok = current.get("sharpe", 0) >= float(baseline.get("sharpe") or 0)
-    pnl_ok = current.get("total_return", 0) * 100 >= float(baseline.get("pnl") or 0)
-    strictly_better = (
-        current.get("lo_adjusted", 0) > float(baseline.get("lo_adj") or 0)
-        or current.get("sharpe", 0) > float(baseline.get("sharpe") or 0)
-        or current.get("total_return", 0) * 100 > float(baseline.get("pnl") or 0)
+    from causal_edge.validation.gate_logic import decide_keep_discard
+    from causal_edge.validation.metrics import load_profile
+
+    profile_name = str(result.get("profile") or "").strip()
+    if not profile_name:
+        raise RuntimeError(
+            "edge evaluation did not provide a profile for baseline compare"
+        )
+
+    decision = decide_keep_discard(
+        result.get("metrics", {}),
+        {
+            "lo_adjusted": float(baseline.get("lo_adj") or 0),
+            "position_ic": float(baseline.get("ic") or 0),
+            "omega": float(baseline.get("omega") or 0),
+            "sharpe": float(baseline.get("sharpe") or 0),
+            "total_return": float(baseline.get("pnl") or 0) / 100.0,
+            "max_dd": float(baseline.get("max_dd") or 0),
+        },
+        load_profile(profile_name),
     )
-    return "keep" if lo_ok and sharpe_ok and pnl_ok and strictly_better else "discard"
+    return "keep" if decision == "KEEP" else "discard"
 
 
 def branch_progression(rows: list[dict[str, str]]) -> str:
@@ -1017,6 +1040,38 @@ def render_round_note(**kwargs) -> str:
 - summary: `{kwargs.get("summary") or f"Recorded {result.get('verdict', 'ERROR')} {result.get('score', '?/?')}."}`
 - next_step: `{kwargs.get("next_step") or "Review the branch README and decide whether to keep refining or open a new branch."}`
 """
+
+
+def validate_edge_handoff(
+    session: Path,
+    branch_name: str,
+    row: dict[str, str],
+    failures: list[str],
+) -> None:
+    handoff_rel = row.get("handoff_path", "")
+    if not handoff_rel:
+        failures.append(f"{branch_name}: missing edge handoff path")
+        return
+    handoff_path = session / handoff_rel
+    if not handoff_path.exists():
+        return
+    try:
+        from causal_edge.research.handoff import (
+            load_strategy_handoff,
+            validate_strategy_handoff,
+        )
+    except Exception as exc:
+        failures.append(
+            f"{branch_name}: unable to import edge handoff validator: {exc}"
+        )
+        return
+    try:
+        payload = load_strategy_handoff(handoff_path)
+    except Exception as exc:
+        failures.append(f"{branch_name}: invalid edge handoff JSON: {exc}")
+        return
+    for reason in validate_strategy_handoff(payload, handoff_path=handoff_path):
+        failures.append(f"{branch_name}: edge handoff rejected - {reason}")
 
 
 def read_tsv_rows(path: Path) -> list[dict[str, str]]:
