@@ -1,25 +1,63 @@
-# causal-alpha
+# abel-alpha
 
-**Causal alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
+**Workspace-first Abel alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
 
 ```bash
 python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install git+https://github.com/Abel-ai-causality/Abel-edge.git
-python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1 --backtest-start 2020-01-01
-python scripts/research_narrative.py init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
-python scripts/research_narrative.py run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
-python scripts/research_narrative.py status --session research/tsla/tsla-v1
-python scripts/research_narrative.py check --session research/tsla/tsla-v1 --strict
+pip install -e .
+abel-alpha workspace init my-lab
+cd my-lab
+abel-alpha workspace status
+abel-alpha env init
+abel-alpha doctor
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover --backtest-start 2020-01-01
+abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha status --session research/tsla/tsla-v1
+abel-alpha check --session research/tsla/tsla-v1 --strict
 ```
 
-If that `git+https` install path fails in your network environment, use the same public repo via zip:
+`abel-alpha workspace init` creates the standard workspace scaffold and
+manifest. The package install still happens from the `Abel-alpha` source
+checkout; the workspace is where research artifacts live. `abel-alpha env init`
+prepares the workspace `.venv`, installs `Abel-alpha`, and installs
+`Abel-edge` from GitHub `main` by default until formal releases exist. Use
+`--edge-source` only for local development overrides. `doctor` then inspects
+the workspace against that configured target. Inside a workspace,
+`abel-alpha init-session` defaults to the manifest-backed `research/` root
+instead of relying on an implicit current-directory layout.
+If the selected Python cannot create a venv in a locked-down environment, use
+`abel-alpha env init --runtime-python /path/to/python` to point alpha at an
+existing interpreter instead.
 
-```bash
-pip install https://github.com/Abel-ai-causality/Abel-edge/archive/refs/heads/main.zip
-```
+## First-Use Flow
+
+Treat this as the standard path for both humans and agents:
+
+1. Install `Abel-alpha` from the local source checkout.
+2. Create a workspace with `abel-alpha workspace init <name>`.
+3. Run `abel-alpha env init` inside that workspace.
+4. Run `abel-alpha doctor` and follow its next step.
+5. If auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`.
+6. Only after the workspace is diagnosably ready, start `init-session`, `init-branch`, and `run-branch`.
+
+If `Abel-alpha` was installed as a skill from GitHub, the installed skill
+directory itself is the local source checkout. Run `pip install -e .` from that
+directory to expose the packaged `abel-alpha` CLI before creating a workspace.
+
+`abel-alpha doctor` is the default readiness gate:
+
+- `ready`: workspace, edge, and auth are ready
+- `auth_missing`: auth is the only missing piece
+- `env_missing` or `edge_missing`: rebuild the workspace runtime with `abel-alpha env init`
+
+If you intentionally point the workspace at an older custom `Abel-edge`, `doctor`
+may report `ready_legacy_edge` or `auth_missing_legacy_edge`. That means the
+fallback path is active and newer structured contracts are unavailable in that
+runtime.
 
 If you want live Abel discovery, complete auth before running `init-session --discover` or `causal-edge discover <TICKER>`:
 
@@ -28,12 +66,29 @@ npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/
 # use -g for a global install in the current agent platform
 # Abel-alpha does not auto-install causal-abel
 # complete causal-abel OAuth once, then causal-edge should reuse the same auth
-python scripts/research_narrative.py init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 ```
 
 If `causal-edge discover <TICKER>` still reports a missing Abel key after OAuth, `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then shared `causal-abel` auth files from `.agents/skills/causal-abel/.env.skill` and known OpenCode/Codex global skill roots. That lets agent-driven installs reuse the `causal-abel` auth file without copying the key into each workspace. Use `causal-edge login` only when you want the standalone fallback that stores `ABEL_API_KEY` directly for the current project.
+When you use `causal-edge login` inside a workspace, alpha-managed runs now
+export that workspace `.env` through `ABEL_AUTH_ENV_FILE` so session and branch
+subprocesses resolve the same auth file deterministically.
 
 Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
+Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
+
+Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Strategy code should prefer the injected `context` object, especially `context["discovery"]` and `context["discovery_path"]`, instead of assuming a relative workspace layout.
+If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
+`abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
+For first-pass strategy experiments, two common pitfalls are worth avoiding:
+- pass an explicit `limit=...` when fetching bars instead of relying on API defaults
+- avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives
+
+## Interface Policy
+
+Use the packaged `abel-alpha` CLI as the primary interface. The legacy
+`python scripts/research_narrative.py ...` entrypoint remains only as a thin
+compatibility wrapper and should not appear in new workflows, docs, or agents.
 
 ```mermaid
 flowchart TD
@@ -100,7 +155,7 @@ Without Abel, fallback discovery is still useful for research continuity, but it
 
 All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
 
-Build your own: install `Abel-edge`, install `causal-abel` from `Abel-skills/tree/main/skills` if you want shared live Abel auth, then run `python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <id> --discover`.
+Build your own: install `Abel-alpha` from this repo, install `causal-abel` from `Abel-skills/tree/main/skills` if you want shared live Abel auth, then run `abel-alpha init-session --ticker <TICKER> --exp-id <id> --discover`.
 
 ## Abel-Pro Mapping
 
@@ -126,7 +181,7 @@ references/
 
 ```
 Abel CAP       → causal graph (discovery)
-causal-alpha   → research methodology + organization (this skill)
+abel-alpha     → research methodology + organization (this skill)
 causal-edge    → raw validation facts + edge-owned handoff contract
 causal-abel    → Abel API access (cap_probe.py)
 ```

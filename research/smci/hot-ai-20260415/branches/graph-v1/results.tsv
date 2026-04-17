@@ -1,2 +1,0 @@
-exp_id	ticker	branch_id	round_id	decision	lo_adj	ic	omega	sharpe	max_dd	pnl	K	score	verdict	mode	description	result_path	report_path
-hot-ai-20260415	SMCI	graph-v1	round-001	keep	5.785	0.0000	2.505	5.760	-0.0418	232.0	1	7/7	PASS	explore	baseline fallback graph vote after Abel CAP 404	branches\graph-v1\outputs\round-001-edge-result.json	branches\graph-v1\outputs\round-001-edge-validation.md

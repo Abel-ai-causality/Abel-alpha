@@ -3,12 +3,16 @@
 ## Quick Start
 
 ```bash
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
-python scripts/research_narrative.py init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
+abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
+abel-alpha init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
 # edit research/<ticker>/<exp_id>/branches/graph-v1/strategy.py
-python scripts/research_narrative.py run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
+abel-alpha run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "baseline"
 # iterate...
 ```
+
+Before this loop, the workspace should already exist and `abel-alpha doctor`
+should be in a satisfactory state. Treat the packaged `abel-alpha` CLI as the
+default interface for new runs.
 
 `causal-edge evaluate` handles raw validation facts. `Abel-alpha` handles keep/discard,
 round recording, and session/branch summaries. You only write strategy.py and decide WHAT to try next.

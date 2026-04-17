@@ -3,9 +3,14 @@
 ## Quick Start
 
 ```bash
-python scripts/research_narrative.py init-session --ticker <TICKER> --exp-id <exp-id>
+abel-alpha init-session --ticker <TICKER> --exp-id <exp-id>
 # → research/<ticker>/<exp_id>/discovery.json created for Abel-alpha organization
 ```
+
+Before running live discovery, use `abel-alpha doctor` to confirm whether auth
+is already available or whether `causal-abel` OAuth still needs to be completed.
+Without `--discover`, the created `discovery.json` is intentionally a pending
+placeholder rather than a live Abel result.
 
 ## The Multihop Protocol
 

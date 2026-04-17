@@ -1,2 +1,0 @@
-exp_id	ticker	branch_id	round_id	decision	lo_adj	ic	omega	sharpe	max_dd	pnl	K	score	verdict	mode	description	result_path	report_path
-hot-ai-20260415	META	graph-v1	round-001	keep	4.795	0.0000	1.992	4.482	-0.0542	155.8	1	7/7	PASS	explore	baseline discovery-driven graph vote	branches\graph-v1\outputs\round-001-edge-result.json	branches\graph-v1\outputs\round-001-edge-validation.md

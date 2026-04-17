@@ -1,0 +1,7 @@
+interface:
+  display_name: "Abel Alpha"
+  short_description: "Workspace-first Abel alpha research flow."
+  default_prompt: >
+    Use $abel-alpha to initialize an Abel-alpha research workspace, run
+    `env init` and `doctor`, resolve auth if needed, then create a session,
+    branch, and first research round through the packaged CLI.
