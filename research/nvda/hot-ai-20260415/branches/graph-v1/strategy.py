@@ -65,8 +65,16 @@ def _load_components() -> tuple[str, list[dict[str, object]]]:
 
 def run_strategy(*, start=None, end=None):
     target_ticker, components = _load_components()
-    n_days = 420
-    dates = pd.date_range(start or "2020-01-01", periods=n_days, freq="D")
+    window_start = pd.Timestamp(start or "2020-01-01").normalize()
+    window_end = (
+        pd.Timestamp(end).normalize() if end else pd.Timestamp.now().normalize()
+    )
+    if window_end < window_start:
+        raise ValueError("end must be on or after start")
+    dates = pd.date_range(window_start, window_end, freq="D")
+    n_days = len(dates)
+    if n_days < 30:
+        raise ValueError("backtest window must span at least 30 daily points")
     rng = np.random.default_rng(_seed_from_text(target_ticker))
 
     latent_future = rng.normal(0.0, 1.0, n_days)
