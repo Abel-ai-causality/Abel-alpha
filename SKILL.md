@@ -84,8 +84,8 @@ Parallelize everything that's independent. Never parallelize what's sequential.
 
 ## Abel-Pro Mapping
 
-- Abel-alpha worktree for the Abel-Pro integration: `D:\codes\causal-alpha\.tree\abel-pro`
+- Abel-alpha worktree for the Abel-Pro integration: `D:\codes\Abel-alpha\.tree\abel-pro`
 - Abel-alpha branch for that worktree: `abel-pro`
-- Paired Abel-edge worktree for validation and execution: `D:\codes\open_source\causal-edge\.tree\abel-pro-demo`
+- Paired Abel-edge worktree for validation and execution: `D:\codes\open_source\Abel-edge\.tree\abel-pro-demo`
 - Paired Abel-edge branch: `abel-pro-demo`
 - Abel auth and data environment defaults to prod

@@ -17,7 +17,7 @@ round recording, and session/branch summaries. You only write strategy.py and de
 
 1. One exploration session lives at `research/<ticker>/<exp_id>/`.
 2. One session can branch into multiple candidate branches under `branches/<branch-id>/`.
-3. One `run-branch` call equals one recorded round and stores raw edge facts plus alpha-owned narrative records.
+3. One `run-branch` call equals one recorded round and stores raw edge JSON, raw edge markdown, an edge-owned handoff JSON, plus alpha-owned narrative records.
 4. The session also appends `events.tsv` so branch creation and round execution stay traceable.
 5. `Abel-alpha check --strict` verifies narrative completeness.
 6. The session fixes one backtest start date that every branch round passes through to `causal-edge evaluate`.
