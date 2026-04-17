@@ -1,6 +1,6 @@
 # causal-alpha
 
-**Causal alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
+**Workspace-first causal alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
 
 ```bash
 python -m venv .venv
@@ -13,24 +13,40 @@ cd my-lab
 abel-alpha workspace status
 abel-alpha env init
 abel-alpha doctor
-abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --backtest-start 2020-01-01
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover --backtest-start 2020-01-01
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 abel-alpha status --session research/tsla/tsla-v1
 abel-alpha check --session research/tsla/tsla-v1 --strict
 ```
 
-`abel-alpha workspace init` creates the standard workspace scaffold and manifest.
-The package install still happens from the `Abel-alpha` source checkout; the
-workspace is where research artifacts live. `abel-alpha env init` prepares the
-workspace `.venv`, installs `Abel-alpha`, and installs `Abel-edge` from
-GitHub `main` by default until formal releases exist. Use `--edge-source` only
-for local development overrides. `doctor` then inspects the workspace against
-that configured target. Inside a workspace, `abel-alpha init-session` defaults
-to the manifest-backed `research/` root instead of relying on an implicit
-current-directory layout.
+`abel-alpha workspace init` creates the standard workspace scaffold and
+manifest. The package install still happens from the `Abel-alpha` source
+checkout; the workspace is where research artifacts live. `abel-alpha env init`
+prepares the workspace `.venv`, installs `Abel-alpha`, and installs
+`Abel-edge` from GitHub `main` by default until formal releases exist. Use
+`--edge-source` only for local development overrides. `doctor` then inspects
+the workspace against that configured target. Inside a workspace,
+`abel-alpha init-session` defaults to the manifest-backed `research/` root
+instead of relying on an implicit current-directory layout.
 
-The legacy `python scripts/research_narrative.py ...` entrypoint remains available as a compatibility path while the packaged CLI becomes the default.
+## First-Use Flow
+
+Treat this as the standard path for both humans and agents:
+
+1. Install `Abel-alpha` from the local source checkout.
+2. Create a workspace with `abel-alpha workspace init <name>`.
+3. Run `abel-alpha env init` inside that workspace.
+4. Run `abel-alpha doctor` and follow its next step.
+5. If auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`.
+6. Only after the workspace is diagnosably ready, start `init-session`, `init-branch`, and `run-branch`.
+
+`abel-alpha doctor` is the default readiness gate:
+
+- `ready`: workspace, edge, and auth are ready
+- `auth_missing`: auth is the only missing piece
+- `ready_legacy_edge` or `auth_missing_legacy_edge`: the installed edge is usable but too old for the full alpha context contract
+- `env_missing` or `edge_missing`: rebuild the workspace runtime with `abel-alpha env init`
 
 If you want a direct `Abel-edge` install as a standalone dependency, you can still use:
 
@@ -54,6 +70,12 @@ Use `init-session --discover` when you want the live Abel parent/blanket discove
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Strategy code should prefer the injected `context` object, especially `context["discovery"]` and `context["discovery_path"]`, instead of assuming a relative workspace layout.
 If the installed `Abel-edge` is older and does not support `--context-json` yet, Abel-alpha falls back to compatibility mode: it still records the alpha context artifact, but `run_strategy()` will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
+
+## Interface Policy
+
+Use the packaged `abel-alpha` CLI as the primary interface. The old
+`python scripts/research_narrative.py ...` path remains compatibility-only and
+should not be used as the main workflow for new setups, docs, or agents.
 
 ```mermaid
 flowchart TD

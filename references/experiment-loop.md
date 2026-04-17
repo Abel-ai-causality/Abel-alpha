@@ -10,7 +10,9 @@ abel-alpha run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "
 # iterate...
 ```
 
-Legacy compatibility remains available through `python scripts/research_narrative.py ...` inside the source checkout.
+Before this loop, the workspace should already exist and `abel-alpha doctor`
+should be in a satisfactory state. Treat the packaged `abel-alpha` CLI as the
+default interface for new runs.
 
 `causal-edge evaluate` handles raw validation facts. `Abel-alpha` handles keep/discard,
 round recording, and session/branch summaries. You only write strategy.py and decide WHAT to try next.

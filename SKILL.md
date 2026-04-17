@@ -16,7 +16,24 @@ metadata:
 
 Causation is the default prior because it survives regime change more often than correlation.
 
-Main install entrypoint: create and activate a virtual environment, install `Abel-alpha` from the local source checkout, then use the packaged `abel-alpha` CLI. `Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its OAuth flow, and let `causal-edge` reuse that shared auth before falling back to `causal-edge login`. If it still reports a missing key, check `python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or point `ABEL_AUTH_ENV_FILE` at the exported auth file.
+Standard operating model: treat `Abel-alpha` as a workspace-first research CLI.
+Do not improvise environment setup, directory layout, or artifact locations.
+Use this default flow unless the user explicitly asks for local development
+overrides:
+
+1. install `Abel-alpha` from the local source checkout
+2. create a research workspace with `abel-alpha workspace init`
+3. prepare the workspace runtime with `abel-alpha env init`
+4. inspect readiness with `abel-alpha doctor`
+5. if auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`
+6. only after `doctor` is satisfactory, start `init-session`, `init-branch`, and `run-branch`
+
+`Abel-alpha` does not auto-install `causal-abel`. If live Abel discovery needs
+auth, install `causal-abel` from `Abel-skills/tree/main/skills`, finish its
+OAuth flow, and let `causal-edge` reuse that shared auth before falling back to
+`causal-edge login`. If it still reports a missing key, check
+`python <causal-abel-skill-root>/scripts/cap_probe.py auth-status --compact` or
+point `ABEL_AUTH_ENV_FILE` at the exported auth file.
 
 ```bash
 python -m venv .venv
@@ -29,10 +46,10 @@ cd my-lab
 abel-alpha workspace status
 abel-alpha env init
 abel-alpha doctor
-abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --backtest-start 2020-01-01
 npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
 # use -g for a global install in the current agent platform
 # then complete causal-abel OAuth once and let causal-edge reuse it
+abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover --backtest-start 2020-01-01
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
@@ -45,10 +62,18 @@ the package from the `Abel-alpha` source checkout first, then use the workspace
 for research artifacts. `abel-alpha env init` prepares the workspace `.venv`
 and installs `Abel-edge` from GitHub `main` by default until formal releases
 exist. Use `--edge-source` only for local development overrides. Inside a
-workspace, `abel-alpha init-session` will default to the configured
-`research_root` instead of guessing from the current directory layout.
+workspace, `abel-alpha init-session` resolves the configured `research_root`
+instead of guessing from the current directory layout.
 
-The legacy `python scripts/research_narrative.py ...` path remains supported as a compatibility entrypoint during the CLI migration.
+Treat `abel-alpha doctor` as the gate before research:
+
+- `ready`: workspace, edge, and auth are ready
+- `auth_missing`: install or authorize `causal-abel`, then rerun `doctor`
+- `ready_legacy_edge` or `auth_missing_legacy_edge`: edge is usable but too old
+  for the full alpha context contract; upgrade edge before relying on
+  `run_strategy(context=...)`
+- `env_missing` or `edge_missing`: repair the workspace runtime with
+  `abel-alpha env init`
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
@@ -60,6 +85,10 @@ and `context["discovery_path"]` over hard-coded relative paths.
 If the installed `Abel-edge` is older and does not support that argument yet, Abel-alpha
 falls back to compatibility mode and `abel-alpha doctor` will report the missing capability.
 Your job: write the strategy implementation.
+
+Use the packaged CLI as the primary interface. The old
+`python scripts/research_narrative.py ...` path is compatibility-only and should
+not be the default guidance for new users or agents.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 

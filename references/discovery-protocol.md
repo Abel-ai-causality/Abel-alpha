@@ -7,7 +7,8 @@ abel-alpha init-session --ticker <TICKER> --exp-id <exp-id>
 # → research/<ticker>/<exp_id>/discovery.json created for Abel-alpha organization
 ```
 
-Legacy compatibility remains available through `python scripts/research_narrative.py ...` inside the source checkout.
+Before running live discovery, use `abel-alpha doctor` to confirm whether auth
+is already available or whether `causal-abel` OAuth still needs to be completed.
 
 ## The Multihop Protocol
 
