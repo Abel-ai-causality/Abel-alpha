@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import which
 
 from abel_alpha.edge_runtime import probe_edge_context_json, probe_edge_discovery_json
 from abel_alpha.workspace import (
@@ -33,6 +34,7 @@ class EnvInitResult:
     alpha_editable: bool
     created_venv: bool
     runtime_mode: str
+    venv_provider: str
 
 
 def init_workspace_env(
@@ -57,6 +59,7 @@ def init_workspace_env(
     venv_path = paths["venv"]
     created_venv = False
     runtime_mode = "managed_venv"
+    venv_provider = "python -m venv"
 
     if runtime_python is not None:
         python_path = record_existing_runtime_python(
@@ -70,15 +73,18 @@ def init_workspace_env(
         if not python_path.exists():
             interpreter = base_python or sys.executable
             try:
-                run_command(
-                    [interpreter, "-m", "venv", str(venv_path)],
+                venv_provider = create_workspace_venv(
+                    interpreter=interpreter,
+                    venv_path=venv_path,
                     cwd=workspace_root,
                 )
             except RuntimeError as exc:
                 raise RuntimeError(
                     "Failed to create the workspace virtual environment. "
                     "This usually means the selected Python cannot run `python -m venv` "
-                    "(for example missing `python3-venv` or `ensurepip`). "
+                    "(for example missing `python3-venv` or `ensurepip`). Abel-alpha "
+                    "will automatically try `uv venv --seed` when uv is installed, "
+                    "but that fallback also failed here. "
                     "In locked-down environments, create or choose an existing interpreter "
                     "and rerun `abel-alpha env init --runtime-python /path/to/python`.\n\n"
                     f"Underlying error:\n{exc}"
@@ -153,6 +159,7 @@ def init_workspace_env(
         alpha_editable=alpha_editable,
         created_venv=created_venv,
         runtime_mode=runtime_mode,
+        venv_provider=venv_provider,
     )
 
 
@@ -172,6 +179,28 @@ def build_local_install_command(
     if no_deps:
         command.append("--no-deps")
     return command
+
+
+def create_workspace_venv(*, interpreter: str, venv_path: Path, cwd: Path) -> str:
+    """Create the workspace venv, falling back to uv when stdlib venv is unavailable."""
+    try:
+        run_command([interpreter, "-m", "venv", str(venv_path)], cwd=cwd)
+        return "python -m venv"
+    except RuntimeError as exc:
+        uv_bin = which("uv")
+        if not uv_bin:
+            raise exc
+        command = [uv_bin, "venv", "--seed"]
+        if interpreter:
+            command.extend(["--python", str(interpreter)])
+        command.append(str(venv_path))
+        try:
+            run_command(command, cwd=cwd)
+        except RuntimeError as uv_exc:
+            raise RuntimeError(
+                f"{exc}\n\nuv fallback also failed:\n{uv_exc}"
+            ) from uv_exc
+        return "uv venv --seed"
 
 
 def resolve_alpha_source(explicit: str | Path | None = None) -> Path:
@@ -229,13 +258,15 @@ def record_existing_runtime_python(
     runtime_python: Path,
 ) -> Path:
     """Persist an explicit existing interpreter path into the workspace manifest."""
-    resolved = runtime_python.resolve()
-    if not resolved.exists():
-        raise RuntimeError(f"Existing runtime python does not exist: {resolved}")
+    expanded = runtime_python.expanduser()
+    absolute = expanded if expanded.is_absolute() else (Path.cwd() / expanded)
+    normalized = absolute.resolve(strict=False)
+    if not normalized.exists():
+        raise RuntimeError(f"Existing runtime python does not exist: {normalized}")
     runtime = manifest.setdefault("runtime", {})
-    runtime["python"] = make_manifest_path(workspace_root, resolved)
+    runtime["python"] = make_manifest_path(workspace_root, absolute)
     write_workspace_manifest(workspace_root, manifest)
-    return resolved
+    return absolute
 
 
 def make_manifest_path(workspace_root: Path, path: Path) -> str:

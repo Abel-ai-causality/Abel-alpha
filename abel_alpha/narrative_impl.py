@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,22 +68,65 @@ RESULTS_HEADER = [
     "handoff_path",
 ]
 
-STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
+ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
 
-Final strategy output must satisfy abs(position) <= 1.
-Default backtest behavior should use the provided start date and treat end=None as the latest available date.
-If provided, context contains workspace/session/branch/discovery metadata from Abel-alpha.
-Prefer context["discovery"] and context["discovery_path"] over hard-coded relative paths.
+Default backtest behavior should use the requested start date from self.context["_research"]["requested_window"].
+If provided, self.context contains workspace/session/branch/discovery metadata from Abel-alpha.
+Prefer StrategyEngine research helpers over hard-coded discovery parsing:
+  - self.research_target_ticker()
+  - self.research_requested_start()
+  - self.research_driver_tickers(require_usable=True, require_full_window=True)
+  - self.research_driver_candidates(...)
+  - self.load_research_bars(...)
+  - self.research_close_frame(...)
+  - self.research_target_driver_frame(overlap="intersection")
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
+from causal_edge.engine.base import StrategyEngine
 
-def run_strategy(*, start=None, end=None, context=None):
-    raise NotImplementedError("Fill in run_strategy()")
+
+class BranchEngine(StrategyEngine):
+    def compute_signals(self):
+        target = self.research_target_ticker() or "{ticker}"
+        start = self.research_requested_start() or "2020-01-01"
+        ready_drivers = self.research_driver_tickers(
+            require_usable=True,
+            require_full_window=True,
+        )
+        # Example paved-road research flow:
+        # bars = self.load_research_bars(
+        #     driver_tickers=ready_drivers[:3],
+        #     require_full_window=True,
+        #     limit=600,
+        # )
+        # close_frame = self.research_close_frame(
+        #     driver_tickers=ready_drivers[:3],
+        #     require_full_window=True,
+        #     limit=600,
+        # )
+        # target_close, driver_frame = self.research_target_driver_frame(
+        #     driver_tickers=ready_drivers[:3],
+        #     require_full_window=True,
+        #     overlap="intersection",
+        #     require_drivers=True,
+        #     limit=600,
+        # )
+        # Build signals from those aligned bars, then return self.finalize_signals(...)
+        dates = pd.date_range(start, periods=120, freq="D", tz="UTC")
+        prices = np.full(len(dates), 100.0, dtype=float)
+        positions = np.zeros(len(dates), dtype=float)
+        return positions, dates, prices
+
+    def get_latest_signal(self):
+        positions, dates, _ = self.compute_signals()
+        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
 '''
 
 
@@ -204,6 +248,17 @@ def main() -> int:
         help="Interpreter used to run causal-edge evaluate (defaults to the workspace python when available)",
     )
 
+    debug_branch = sub.add_parser(
+        "debug-branch",
+        help="Run edge debug-evaluate without recording a narrative round",
+    )
+    debug_branch.add_argument("--branch", required=True)
+    debug_branch.add_argument(
+        "--python-bin",
+        default=None,
+        help="Interpreter used to run causal-edge debug-evaluate (defaults to the workspace python when available)",
+    )
+
     render = sub.add_parser("render", help="Render summaries for a session")
     render.add_argument("--session", required=True)
 
@@ -241,6 +296,9 @@ def main() -> int:
                 f"  discovery_source: {discovery.get('source', 'unknown')} "
                 f"(K={discovery.get('K_discovery', 0)})"
             )
+            readiness_summary = format_data_readiness_summary(discovery)
+            if readiness_summary:
+                print(f"  data_readiness: {readiness_summary}")
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
@@ -250,7 +308,7 @@ def main() -> int:
     if args.command == "init-branch":
         branch = init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
         print(f"Created Abel-alpha branch at {branch}")
-        print(f"  strategy: {branch / 'strategy.py'}")
+        print(f"  engine: {branch / 'engine.py'}")
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
         print("")
@@ -259,11 +317,13 @@ def main() -> int:
         print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
         print("")
         print("Next:")
-        print(f"  edit {branch / 'strategy.py'}")
+        print(f"  edit {branch / 'engine.py'}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
     if args.command == "run-branch":
         return run_branch_round(args)
+    if args.command == "debug-branch":
+        return debug_branch_run(args)
     if args.command == "render":
         render_session(resolve_workspace_arg_path(args.session))
         return 0
@@ -321,6 +381,7 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  python: {result.python_path}")
     print(f"  alpha_source: {result.alpha_source}")
     print(f"  runtime_mode: {result.runtime_mode}")
+    print(f"  venv_provider: {result.venv_provider}")
     print(f"  edge_install_mode: {result.edge_install_mode}")
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
@@ -399,11 +460,16 @@ def init_session_dir(
     discovery_data = None
     if discover:
         discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
+        discovery_data["backtest"] = {"start": backtest_start}
+        discovery_data = attach_data_readiness(
+            session=session,
+            discovery_data=discovery_data,
+            backtest_start=backtest_start,
+        )
     with SessionLock(session):
         write_tsv_header(session / "events.tsv", EVENTS_HEADER)
         discovery_path = session / "discovery.json"
         if discovery_data is not None:
-            discovery_data["backtest"] = {"start": backtest_start}
             discovery_path.write_text(
                 json.dumps(discovery_data, indent=2),
                 encoding="utf-8",
@@ -458,6 +524,25 @@ def init_session_dir(
                     "artifact_path": str(discovery_path.relative_to(session)),
                 },
             )
+            if discovery_data.get("data_readiness"):
+                append_tsv_row(
+                    session / "events.tsv",
+                    EVENTS_HEADER,
+                    {
+                        "timestamp": _now(),
+                        "event": "data_readiness_recorded",
+                        "branch_id": "",
+                        "round_id": "",
+                        "mode": "",
+                        "verdict": "",
+                        "decision": "",
+                        "description": (
+                            "Recorded driver data readiness: "
+                            f"{format_data_readiness_summary(discovery_data)}"
+                        ),
+                        "artifact_path": str(discovery_path.relative_to(session)),
+                    },
+                )
         render_session(session)
     return session
 
@@ -560,6 +645,94 @@ def build_discovery_payload_from_text(
     }
 
 
+def attach_data_readiness(
+    *,
+    session: Path,
+    discovery_data: dict,
+    backtest_start: str,
+) -> dict:
+    """Attach edge-owned data readiness facts to a live discovery payload."""
+    discovery_path = session / "discovery.json"
+    discovery_path.write_text(json.dumps(discovery_data, indent=2), encoding="utf-8")
+    try:
+        report = run_edge_verify_data(
+            session=session,
+            discovery_path=discovery_path,
+            backtest_start=backtest_start,
+        )
+    except RuntimeError:
+        discovery_path.unlink(missing_ok=True)
+        return discovery_data
+    discovery_path.unlink(missing_ok=True)
+    if report is None:
+        return discovery_data
+    enriched = dict(discovery_data)
+    enriched["data_readiness"] = report
+    enriched["usable_tickers"] = [
+        item.get("ticker")
+        for item in report.get("results", [])
+        if item.get("usable")
+    ]
+    enriched["full_window_tickers"] = [
+        item.get("ticker")
+        for item in report.get("results", [])
+        if item.get("status") == "full_window"
+    ]
+    return enriched
+
+
+def run_edge_verify_data(
+    *,
+    session: Path,
+    discovery_path: Path,
+    backtest_start: str,
+) -> dict | None:
+    """Run edge verify-data against a discovery payload and parse the structured report."""
+    python_bin = resolve_default_python_bin(session)
+    workspace_root = find_workspace_root(session)
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    fd, temp_name = tempfile.mkstemp(suffix="-verify-data.json")
+    os.close(fd)
+    output_path = Path(temp_name)
+    output_path.unlink(missing_ok=True)
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "verify-data",
+        "--discovery-json",
+        str(discovery_path),
+        "--start",
+        backtest_start,
+        "--output-json",
+        str(output_path),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    if not output_path.exists():
+        if "No module named" in (completed.stderr or "") or "No such command" in (
+            completed.stderr or completed.stdout or ""
+        ):
+            return None
+        raise RuntimeError(
+            "Abel-edge verify-data did not produce a readiness report. "
+            "Upgrade the workspace runtime before depending on discovery readiness."
+        )
+    try:
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def parse_discovery_items(output: str) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     current: dict[str, object] | None = None
@@ -610,10 +783,10 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         (branch / "rounds").mkdir(parents=True, exist_ok=True)
         (branch / "outputs").mkdir(parents=True, exist_ok=True)
         write_tsv_header(branch / "results.tsv", RESULTS_HEADER)
-        strategy = branch / "strategy.py"
-        if not strategy.exists():
-            strategy.write_text(
-                STRATEGY_TEMPLATE.format(
+        engine = branch / "engine.py"
+        if not engine.exists():
+            engine.write_text(
+                ENGINE_TEMPLATE.format(
                     ticker=discovery.get("ticker", session.parent.name.upper())
                 ),
                 encoding="utf-8",
@@ -720,7 +893,13 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return completed.returncode or 1
-    decision = alpha_decision(rows, result)
+    if not has_explicit_hypothesis(args.hypothesis):
+        print(
+            "Warning: recording a round without an explicit hypothesis. "
+            "State the causal claim, expected sign, and invalidation condition before the next round.",
+            file=sys.stderr,
+        )
+    decision = alpha_decision(rows, result, session=session)
 
     round_note = branch / "rounds" / f"{round_id}.md"
     round_note.write_text(
@@ -795,13 +974,71 @@ def run_branch_round(args: argparse.Namespace) -> int:
     if context_mode != "injected":
         print(
             "Warning: installed Abel-edge does not support --context-json yet; "
-            "alpha context was recorded but not injected into run_strategy()."
+            "alpha context was recorded but not injected into the research engine context."
         )
     print(f"Alpha context: {context_path.relative_to(session)}")
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
     print(f"Edge handoff: {handoff_path.relative_to(session)}")
     return 0 if result.get("verdict") == "PASS" else 1
+
+
+def debug_branch_run(args: argparse.Namespace) -> int:
+    branch = resolve_workspace_arg_path(args.branch).resolve()
+    session = branch.parent.parent
+    discovery = load_discovery(session)
+    workspace_root = find_workspace_root(branch)
+    backtest_start = _get_backtest_start(discovery)
+    context_path = branch / "outputs" / "debug-alpha-context.json"
+    debug_result_path = branch / "outputs" / "debug-edge-result.json"
+    context_path.parent.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(
+        json.dumps(
+            build_branch_context(
+                branch=branch,
+                session=session,
+                discovery=discovery,
+                round_id="debug",
+                backtest_start=backtest_start,
+            ),
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    python_bin = args.python_bin or resolve_default_python_bin(branch)
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "debug-evaluate",
+        "--workdir",
+        str(branch),
+        "--start",
+        backtest_start,
+        "--output-json",
+        str(debug_result_path),
+    ]
+    if edge_supports_context_json(python_bin, session):
+        command[6:6] = ["--context-json", str(context_path)]
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    sys.stdout.write(completed.stdout)
+    sys.stderr.write(completed.stderr)
+    print(f"Debug context: {context_path.relative_to(session)}")
+    if debug_result_path.exists():
+        print(f"Debug result: {debug_result_path.relative_to(session)}")
+    print("No narrative round was recorded.")
+    return completed.returncode
 
 
 def render_session(session: Path) -> None:
@@ -840,15 +1077,35 @@ def print_status(session: Path) -> None:
     )
     print(f"Branches: {len(branches)}")
     print(f"Total rounds: {sum(len(branch['rows']) for branch in branches)}")
+    readiness_summary = format_data_readiness_summary(discovery)
+    if readiness_summary:
+        print(f"Discovery readiness: {readiness_summary}")
+    leader = select_leader(branches)
+    if leader and leader["rows"]:
+        latest = leader["rows"][-1]
+        latest_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
+        print(
+            "Lead: "
+            f"{leader['branch_id']} {latest.get('decision', 'pending')} {latest.get('verdict', 'n/a')} "
+            f"{latest.get('score', '?/?')} {latest_note.get('failure_signature', 'unknown')} "
+            f"active={latest_note.get('signal_activity', 'n/a')}"
+        )
     for branch in branches:
         latest = branch["rows"][-1] if branch["rows"] else {}
+        latest_note = (
+            read_round_note(branch["branch_dir"], latest.get("round_id", "")) if latest else {}
+        )
         keep_count = sum(1 for row in branch["rows"] if row.get("decision") == "keep")
         discard_count = sum(
             1 for row in branch["rows"] if row.get("decision") == "discard"
         )
         print(
             f"  {branch['branch_id']:20s} rounds={len(branch['rows']):2d} keep={keep_count:2d} "
-            f"discard={discard_count:2d} latest={latest.get('round_id', 'none')} {latest.get('decision', 'pending')}"
+            f"discard={discard_count:2d} latest={latest.get('round_id', 'none')} {latest.get('decision', 'pending')} "
+            f"{latest.get('verdict', 'n/a')} {latest.get('score', '?/?')} "
+            f"{latest_note.get('failure_signature', 'unknown')} "
+            f"active={latest_note.get('signal_activity', 'n/a')} "
+            f"hypothesis={'yes' if has_explicit_hypothesis(latest_note.get('hypothesis', '')) else 'no'}"
         )
 
 
@@ -870,7 +1127,7 @@ def check_session(session: Path, *, strict: bool) -> int:
             "README.md",
             "thesis.md",
             "memory.md",
-            "strategy.py",
+            "engine.py",
             "results.tsv",
         ):
             if not (branch_dir / required).exists():
@@ -918,7 +1175,7 @@ def check_session(session: Path, *, strict: bool) -> int:
                 branch_dir / "memory.md",
             ):
                 text = text_path.read_text(encoding="utf-8")
-                if "not recorded" in text or "Fill in" in text:
+                if "Fill in" in text or "{{" in text or "}}" in text:
                     failures.append(
                         f"{branch_dir.name}: unresolved placeholder in {text_path.name}"
                     )
@@ -932,6 +1189,88 @@ def check_session(session: Path, *, strict: bool) -> int:
     return 0
 
 
+def select_leader(branches: list[dict]) -> dict | None:
+    ranked = ranked_branches(branches)
+    return ranked[0] if ranked else None
+
+
+def ranked_branches(branches: list[dict]) -> list[dict]:
+    scored = [branch for branch in branches if branch["rows"]]
+    return sorted(scored, key=branch_rank_key, reverse=True)
+
+
+def branch_rank_key(branch: dict) -> tuple:
+    rows = branch["rows"]
+    latest = rows[-1]
+    note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
+    return (
+        decision_rank(latest.get("decision", "")),
+        verdict_rank(latest.get("verdict", "")),
+        parse_score_ratio(latest.get("score", "")),
+        float(latest.get("lo_adj") or 0),
+        float(latest.get("sharpe") or 0),
+        signal_activity_ratio(note.get("signal_activity", "")),
+        len(rows),
+    )
+
+
+def decision_rank(decision: str) -> int:
+    return {"keep": 3, "pending": 2, "discard": 1}.get(str(decision or "").strip(), 0)
+
+
+def verdict_rank(verdict: str) -> int:
+    return {"PASS": 3, "FAIL": 2, "ERROR": 1}.get(str(verdict or "").strip().upper(), 0)
+
+
+def parse_score_ratio(score: str) -> float:
+    text = str(score or "").strip()
+    if "/" not in text:
+        return 0.0
+    left, right = text.split("/", 1)
+    try:
+        numerator = float(left)
+        denominator = float(right)
+    except ValueError:
+        return 0.0
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
+def signal_activity_ratio(activity: str) -> float:
+    text = str(activity or "").strip()
+    if "/" not in text:
+        return 0.0
+    left, right = [part.strip() for part in text.split("/", 1)]
+    try:
+        active = float(left)
+        total = float(right)
+    except ValueError:
+        return 0.0
+    if total <= 0:
+        return 0.0
+    return active / total
+
+
+def normalize_hypothesis_text(value: str) -> str:
+    text = str(value or "").strip()
+    if text:
+        return text
+    return (
+        "Hypothesis missing. Before the next round, state the causal claim, "
+        "expected sign, and invalidation condition explicitly."
+    )
+
+
+def has_explicit_hypothesis(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(
+        text
+        and text != "No hypothesis supplied."
+        and not text.startswith("Hypothesis missing.")
+    )
+
+
 def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -> str:
     keep_branches = [
         branch
@@ -943,14 +1282,20 @@ def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -
         for branch in branches
         if branch["rows"] and branch["rows"][-1].get("decision") == "discard"
     ]
-    leader = keep_branches[-1] if keep_branches else (branches[0] if branches else None)
+    leader = select_leader(branches)
     executive = "No validated rounds yet. Start the first branch to establish the session baseline."
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
+        leader_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
+        lead_label = "Current KEEP baseline"
+        if latest.get("decision") != "keep":
+            lead_label = "Current lead candidate (no KEEP baseline yet)"
         executive = (
             f"Session has {len(branches)} branch(es): {len(keep_branches)} keep and {len(discard_branches)} discard. "
-            f"Current lead is `{leader['branch_id']}` at `{latest.get('round_id', 'none')}` with Lo {float(latest.get('lo_adj') or 0):.3f}, "
-            f"Sharpe {float(latest.get('sharpe') or 0):.3f}, PnL {float(latest.get('pnl') or 0):.1f}%."
+            f"{lead_label} is `{leader['branch_id']}` at `{latest.get('round_id', 'none')}` with Lo {float(latest.get('lo_adj') or 0):.3f}, "
+            f"Sharpe {float(latest.get('sharpe') or 0):.3f}, PnL {float(latest.get('pnl') or 0):.1f}%, "
+            f"failure signature `{leader_note.get('failure_signature', 'unknown')}`, "
+            f"active `{leader_note.get('signal_activity', 'n/a')}`."
         )
 
     branch_lines = (
@@ -997,9 +1342,15 @@ generated by Abel-alpha narrative layer
 
 Explore {discovery.get("ticker", session.parent.name.upper())} in session `{session.name}` using discovery source `{discovery.get("source", "unknown")}` and compare candidate branches through validated rounds.
 
+## Discovery Readiness
+
+{render_discovery_readiness_section(discovery)}
+
 ## Selection Narrative
 
 This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_branches)} keep, {len(discard_branches)} discard, {len(branches) - len(keep_branches) - len(discard_branches)} pending.
+
+{render_selection_narrative(branches)}
 
 ## Branches
 
@@ -1054,6 +1405,13 @@ See `thesis.md` for the branch hypothesis.
 - summary: `{latest.get("description", "No rounds recorded yet.")}`
 - next_step: `{latest_note.get("next_step", "Review the latest round note for the next move.")}`
 
+## Latest Diagnostics
+
+- failure_signature: `{latest_note.get("failure_signature", "not recorded")}`
+- runtime_stage: `{latest_note.get("runtime_stage", "not recorded")}`
+- signal_activity: `{latest_note.get("signal_activity", "not recorded")}`
+- diagnostic_hints: `{latest_note.get("diagnostic_hints", "not recorded")}`
+
 ## Latest Artifacts
 
 - alpha_context_mode: `{latest_note.get("context_mode", "not recorded")}`
@@ -1067,6 +1425,7 @@ See `thesis.md` for the branch hypothesis.
 1. latest_hypothesis: `{latest_note.get("hypothesis", "not recorded")}`
 1. latest_summary: `{latest_note.get("summary", latest.get("description", "not recorded"))}`
 1. latest_failures: `{latest_note.get("failures", "none")}`
+1. hypothesis_status: `{"explicit" if has_explicit_hypothesis(latest_note.get("hypothesis", "")) else "needs work"}`
 
 ## Round Ledger
 
@@ -1138,6 +1497,8 @@ def build_thesis(branch: dict, discovery: dict) -> str:
     )
     parents = format_discovery_nodes(discovery.get("parents", []), limit=5)
     blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
+    usable = format_simple_nodes(discovery.get("usable_tickers", []), limit=8)
+    full_window = format_simple_nodes(discovery.get("full_window_tickers", []), limit=8)
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -1147,12 +1508,20 @@ generated by Abel-alpha narrative layer
 Branch `{branch["branch_id"]}` currently assumes: `{hypothesis or latest.get("description", "Initial branch hypothesis not recorded yet")}`.
 Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.get("verdict", "not_validated")}`.
 
+## Hypothesis Checklist
+
+- causal claim: `state what should drive the target and why`
+- expected sign / regime: `state when the signal should be long, short, or flat`
+- invalidation condition: `state what evidence would make this branch unconvincing`
+
 ## Input Universe
 
 - target: `{discovery.get("ticker", branch["ticker"])}`
 - discovery_source: `{discovery.get("source", "unknown")}`
 - direct_parents: `{parents}`
 - blanket_candidates: `{blanket}`
+- usable_tickers: `{usable}`
+- full_window_tickers: `{full_window}`
 
 ## Main Risks
 
@@ -1182,7 +1551,64 @@ def format_discovery_nodes(items: list[object], *, limit: int = 5) -> str:
     return ", ".join(rendered) or "none recorded"
 
 
-def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
+def format_simple_nodes(items: list[object], *, limit: int = 8) -> str:
+    rendered = [str(item).strip() for item in items[:limit] if str(item).strip()]
+    return ", ".join(rendered) or "none recorded"
+
+
+def format_data_readiness_summary(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return ""
+    requested = report.get("requested_window") or {}
+    return (
+        f"{summary.get('full_window_count', 0)} full-window, "
+        f"{summary.get('partial_window_count', 0)} partial, "
+        f"{summary.get('no_data_count', 0)} no-data, "
+        f"{summary.get('error_count', 0)} error "
+        f"(start {requested.get('start', 'latest')})"
+    )
+
+
+def render_discovery_readiness_section(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return "`No data readiness report recorded yet. Run live discovery again after edge verification is available.`"
+    full_window = ", ".join(discovery.get("full_window_tickers") or []) or "none"
+    usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
+    return (
+        f"- summary: `{format_data_readiness_summary(discovery)}`\n"
+        f"- usable_tickers: `{usable}`\n"
+        f"- full_window_tickers: `{full_window}`"
+    )
+
+
+def render_selection_narrative(branches: list[dict]) -> str:
+    ranked = ranked_branches(branches)[:3]
+    if not ranked:
+        return "No branch rankings yet because no validated rounds have been recorded."
+    lines = []
+    for index, branch in enumerate(ranked, start=1):
+        latest = branch["rows"][-1]
+        note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
+        reason = (
+            latest_recorded_hypothesis(branch)
+            or note.get("hypothesis")
+            or latest.get("description", "No explicit hypothesis recorded yet.")
+        )
+        label = "lead" if index == 1 else "runner-up"
+        lines.append(
+            f"{index}. `{branch['branch_id']}` ({label}) -> "
+            f"`{latest.get('decision', 'pending')}` / `{latest.get('verdict', 'n/a')}` / "
+            f"`{latest.get('score', '?/?')}` / signature `{note.get('failure_signature', 'unknown')}`. "
+            f"Reasoning: `{reason}`"
+        )
+    return "\n".join(lines)
+
+
+def alpha_decision(rows: list[dict[str, str]], result: dict, *, session: Path | None = None) -> str:
     if result.get("verdict") != "PASS":
         return "discard"
 
@@ -1194,28 +1620,86 @@ def alpha_decision(rows: list[dict[str, str]], result: dict) -> str:
     if baseline is None:
         return "keep"
 
-    from causal_edge.validation.gate_logic import decide_keep_discard
-    from causal_edge.validation.metrics import load_profile
-
     profile_name = str(result.get("profile") or "").strip()
     if not profile_name:
         raise RuntimeError(
             "edge evaluation did not provide a profile for baseline compare"
         )
 
-    decision = decide_keep_discard(
-        result.get("metrics", {}),
-        {
-            "lo_adjusted": float(baseline.get("lo_adj") or 0),
-            "position_ic": float(baseline.get("ic") or 0),
-            "omega": float(baseline.get("omega") or 0),
-            "sharpe": float(baseline.get("sharpe") or 0),
-            "total_return": float(baseline.get("pnl") or 0) / 100.0,
-            "max_dd": float(baseline.get("max_dd") or 0),
-        },
-        load_profile(profile_name),
-    )
+    baseline_metrics = {
+        "lo_adjusted": float(baseline.get("lo_adj") or 0),
+        "position_ic": float(baseline.get("ic") or 0),
+        "omega": float(baseline.get("omega") or 0),
+        "sharpe": float(baseline.get("sharpe") or 0),
+        "total_return": float(baseline.get("pnl") or 0) / 100.0,
+        "max_dd": float(baseline.get("max_dd") or 0),
+    }
+
+    try:
+        from causal_edge.validation.gate_logic import decide_keep_discard
+        from causal_edge.validation.metrics import load_profile
+
+        decision = decide_keep_discard(
+            result.get("metrics", {}),
+            baseline_metrics,
+            load_profile(profile_name),
+        )
+    except ImportError:
+        if session is None:
+            raise
+        decision = alpha_decision_with_runtime(
+            session=session,
+            current_metrics=result.get("metrics", {}),
+            baseline_metrics=baseline_metrics,
+            profile_name=profile_name,
+        )
     return "keep" if decision == "KEEP" else "discard"
+
+
+def alpha_decision_with_runtime(
+    *,
+    session: Path,
+    current_metrics: dict,
+    baseline_metrics: dict,
+    profile_name: str,
+) -> str:
+    workspace_root = find_workspace_root(session)
+    if workspace_root is None:
+        raise RuntimeError(
+            "Cannot resolve workspace runtime for baseline comparison."
+        )
+    manifest = load_workspace_manifest(workspace_root)
+    python_path = resolve_runtime_python(workspace_root, manifest)
+    payload = {
+        "current_metrics": current_metrics,
+        "baseline_metrics": baseline_metrics,
+        "profile_name": profile_name,
+    }
+    script = (
+        "import json, sys\n"
+        "from causal_edge.validation.gate_logic import decide_keep_discard\n"
+        "from causal_edge.validation.metrics import load_profile\n"
+        "payload = json.loads(sys.stdin.read())\n"
+        "decision = decide_keep_discard(\n"
+        "    payload['current_metrics'],\n"
+        "    payload['baseline_metrics'],\n"
+        "    load_profile(payload['profile_name']),\n"
+        ")\n"
+        "print(decision)\n"
+    )
+    completed = subprocess.run(
+        [str(python_path), "-c", script],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip() or "unknown error"
+        raise RuntimeError(
+            f"Workspace runtime could not compare against the KEEP baseline: {detail}"
+        )
+    return completed.stdout.strip() or "DISCARD"
 
 
 def build_branch_context(
@@ -1273,16 +1757,26 @@ def build_branch_snapshot_line(branch: dict) -> str:
     first = rows[0]
     note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
     reason = (
-        note.get("hypothesis") or note.get("failures") or latest.get("description", "")
+        latest_recorded_hypothesis(branch)
+        or note.get("failures")
+        or latest.get("description", "")
     )
     return (
         f"1. `{branch['branch_id']}` -> `{latest.get('decision', 'pending')}` after {len(rows)} round(s). "
         f"Why: `{reason or 'not recorded'}`. Trend: Lo {float(first.get('lo_adj') or 0):.3f} -> {float(latest.get('lo_adj') or 0):.3f}, "
-        f"Sharpe {float(first.get('sharpe') or 0):.3f} -> {float(latest.get('sharpe') or 0):.3f}, PnL {float(first.get('pnl') or 0):.1f}% -> {float(latest.get('pnl') or 0):.1f}%."
+        f"Sharpe {float(first.get('sharpe') or 0):.3f} -> {float(latest.get('sharpe') or 0):.3f}, "
+        f"PnL {float(first.get('pnl') or 0):.1f}% -> {float(latest.get('pnl') or 0):.1f}%, "
+        f"signature `{note.get('failure_signature', 'unknown')}`, active `{note.get('signal_activity', 'n/a')}`."
     )
 
 
 def session_next_step(branches: list[dict]) -> str:
+    leader = select_leader(branches)
+    has_historical_keep = any(
+        row.get("decision") == "keep"
+        for branch in branches
+        for row in branch["rows"]
+    )
     keep = [
         branch
         for branch in branches
@@ -1297,6 +1791,22 @@ def session_next_step(branches: list[dict]) -> str:
         return f"Continue improving `{keep[-1]['branch_id']}` or branch from the discarded ideas now that both keep and discard outcomes are recorded."
     if keep:
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
+    if leader and leader["rows"]:
+        note = read_round_note(leader["branch_dir"], leader["rows"][-1].get("round_id", ""))
+        if not has_explicit_hypothesis(note.get("hypothesis", "")):
+            return (
+                f"Before the next round, tighten `{leader['branch_id']}` by writing an explicit hypothesis "
+                "with a causal claim, expected sign, and invalidation condition."
+            )
+        if has_historical_keep:
+            return (
+                f"No branch is currently ending on KEEP, but `{leader['branch_id']}` still carries the strongest "
+                "history. Resume it from the latest credible baseline before opening a new sibling branch."
+            )
+        return (
+            f"No KEEP baseline exists yet. Resume `{leader['branch_id']}` first because it is currently the strongest "
+            "candidate, or open a sibling branch only if you have a genuinely different causal thesis."
+        )
     return "Revise the discarded branches or open a new branch with a different hypothesis before the next validation round."
 
 
@@ -1304,7 +1814,7 @@ def latest_recorded_hypothesis(branch: dict) -> str:
     for row in reversed(branch["rows"]):
         note = read_round_note(branch["branch_dir"], row.get("round_id", ""))
         hypothesis = (note.get("hypothesis") or "").strip()
-        if hypothesis and hypothesis != "No hypothesis supplied.":
+        if has_explicit_hypothesis(hypothesis):
             return hypothesis
     return ""
 
@@ -1366,6 +1876,10 @@ def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
             "hypothesis",
             "expected_signal",
             "failures",
+            "failure_signature",
+            "runtime_stage",
+            "signal_activity",
+            "diagnostic_hints",
             "summary",
             "next_step",
             "context_mode",
@@ -1385,6 +1899,8 @@ def render_round_note(**kwargs) -> str:
     metrics = result.get("metrics", {})
     requested_window = result.get("requested_window", {})
     effective_window = result.get("effective_window", {})
+    diagnostics = result.get("diagnostics") or {}
+    signal = diagnostics.get("signal") or {}
     actions = kwargs.get("actions") or ["Executed raw causal-edge evaluation"]
     action_lines = "\n".join(f"1. {action}" for action in actions)
     return f"""# {kwargs["round_id"]}
@@ -1410,7 +1926,7 @@ def render_round_note(**kwargs) -> str:
 ## Inputs And Hypothesis
 
 - input: `{kwargs.get("input_note") or f"Branch {kwargs['branch_id']} entering {kwargs['round_id']}."}`
-- hypothesis: `{kwargs.get("hypothesis") or "No hypothesis supplied."}`
+- hypothesis: `{normalize_hypothesis_text(kwargs.get("hypothesis", ""))}`
 - expected_signal: `{kwargs.get("expected_signal") or "Improve evaluation outcome versus the current working baseline."}`
 
 ## Actions
@@ -1426,6 +1942,13 @@ def render_round_note(**kwargs) -> str:
 - total_return: `{metrics.get("total_return", 0) * 100:.1f}%`
 - max_dd: `{metrics.get("max_dd", 0) * 100:.1f}%`
 - failures: `{"; ".join(result.get("failures", [])) or "none"}`
+
+## Diagnostics
+
+- failure_signature: `{diagnostics.get("failure_signature", "unknown")}`
+- runtime_stage: `{diagnostics.get("runtime_stage", "unknown")}`
+- signal_activity: `{signal.get("active_days", 0)} / {signal.get("total_days", 0)}`
+- diagnostic_hints: `{"; ".join(diagnostics.get("hints", [])) or "none"}`
 
 ## Artifacts
 
@@ -1455,6 +1978,24 @@ def validate_edge_handoff(
     handoff_path = session / handoff_rel
     if not handoff_path.exists():
         return
+    workspace_root = find_workspace_root(session)
+    if workspace_root is not None:
+        try:
+            manifest = load_workspace_manifest(workspace_root)
+            python_path = resolve_runtime_python(workspace_root, manifest)
+        except Exception as exc:
+            failures.append(
+                f"{branch_name}: unable to resolve workspace runtime for handoff validation: {exc}"
+            )
+            return
+        if python_path.exists():
+            validate_edge_handoff_with_runtime(
+                python_path=python_path,
+                handoff_path=handoff_path,
+                branch_name=branch_name,
+                failures=failures,
+            )
+            return
     try:
         from causal_edge.research.handoff import (
             load_strategy_handoff,
@@ -1471,6 +2012,46 @@ def validate_edge_handoff(
         failures.append(f"{branch_name}: invalid edge handoff JSON: {exc}")
         return
     for reason in validate_strategy_handoff(payload, handoff_path=handoff_path):
+        failures.append(f"{branch_name}: edge handoff rejected - {reason}")
+
+
+def validate_edge_handoff_with_runtime(
+    *,
+    python_path: Path,
+    handoff_path: Path,
+    branch_name: str,
+    failures: list[str],
+) -> None:
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from causal_edge.research.handoff import load_strategy_handoff, validate_strategy_handoff\n"
+        "handoff_path = Path(sys.argv[1])\n"
+        "payload = load_strategy_handoff(handoff_path)\n"
+        "reasons = list(validate_strategy_handoff(payload, handoff_path=handoff_path))\n"
+        "print(json.dumps({'ok': not reasons, 'reasons': reasons}))\n"
+    )
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", script, str(handoff_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        failures.append(
+            f"{branch_name}: workspace runtime handoff validation failed: {detail}"
+        )
+        return
+    try:
+        payload = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        failures.append(
+            f"{branch_name}: workspace runtime returned invalid handoff validation output: {exc}"
+        )
+        return
+    for reason in payload.get("reasons") or []:
         failures.append(f"{branch_name}: edge handoff rejected - {reason}")
 
 

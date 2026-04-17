@@ -56,7 +56,7 @@ regardless of how much Sharpe improves. These rules are non-negotiable.
 
 ## Automated Detection
 
-`evaluate.py` runs `check_look_ahead()` on `strategy.py` before execution.
+`causal-edge evaluate` runs `check_look_ahead()` on `engine.py` before execution.
 Common patterns are caught automatically. But this is not exhaustive —
 you must also manually verify any new feature engineering is lag-safe.
 
@@ -71,7 +71,7 @@ you must also manually verify any new feature engineering is lag-safe.
 ## Two-Layer Detection
 
 **Layer 1: Static analysis** (`check_look_ahead`)
-- Scans strategy.py source code for regex patterns
+- Scans engine.py source code for regex patterns
 - Catches: missing .shift(), np.std on full array, same-day price vs MA
 - BLIND SPOT: cannot detect look-ahead hidden in pre-computed arrays
 

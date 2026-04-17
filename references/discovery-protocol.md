@@ -39,7 +39,7 @@ Production proof:
 4. **Multihop** — for each child ≠ target, get its parents. Add novel ones as hop-2
 5. **Crypto peers** — for crypto targets, optionally check `graph.paths` from major crypto assets after higher-priority causal candidates
 
-K is auto-computed by `causal-edge evaluate` from strategy.py source.
+K is auto-computed by `causal-edge evaluate` from engine.py source.
 You don't need to track K manually.
 
 Discovery belongs to the exploration session first, not to only one branch file. Use the

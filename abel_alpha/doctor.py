@@ -162,7 +162,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 ),
                 "next_step": (
                     "You can continue with `abel-alpha init-session`, but upgrade Abel-edge before "
-                    "depending on full structured discovery or `run_strategy(context=...)`."
+                    "depending on full structured discovery or the injected research engine context."
                 ),
             }
         )
