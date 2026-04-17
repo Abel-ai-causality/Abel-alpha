@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from abel_alpha.doctor import render_doctor_report, run_doctor
+from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     build_default_manifest,
@@ -214,7 +214,7 @@ def main() -> int:
     if args.command == "doctor":
         return handle_doctor_command(args)
     if args.command == "init-session":
-        init_session_dir(
+        session = init_session_dir(
             args.ticker,
             args.exp_id,
             resolve_session_root(args.root),
@@ -222,9 +222,32 @@ def main() -> int:
             discover_limit=args.discover_limit,
             backtest_start=args.backtest_start,
         )
+        discovery = load_discovery(session)
+        print(f"Created Abel-alpha session at {session}")
+        print(f"  ticker: {discovery.get('ticker', args.ticker.upper())}")
+        print(f"  discovery: {session / 'discovery.json'}")
+        print(f"  events: {session / 'events.tsv'}")
+        if args.discover:
+            print(
+                f"  discovery_source: {discovery.get('source', 'unknown')} "
+                f"(K={discovery.get('K_discovery', 0)})"
+            )
+        else:
+            print("  discovery_source: pending (live discovery not run)")
+        print("")
+        print("Next:")
+        print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
         return 0
     if args.command == "init-branch":
-        init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
+        branch = init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
+        print(f"Created Abel-alpha branch at {branch}")
+        print(f"  strategy: {branch / 'strategy.py'}")
+        print(f"  rounds: {branch / 'rounds'}")
+        print(f"  outputs: {branch / 'outputs'}")
+        print("")
+        print("Next:")
+        print(f"  edit {branch / 'strategy.py'}")
+        print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
     if args.command == "run-branch":
         return run_branch_round(args)
@@ -299,7 +322,7 @@ def handle_doctor_command(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render_doctor_report(result))
-    return 0 if result.get("status") == "ready" else 1
+    return doctor_exit_code(result)
 
 
 def resolve_session_root(root_arg: str | None) -> Path:

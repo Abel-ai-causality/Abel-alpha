@@ -14,6 +14,9 @@ from abel_alpha.workspace import (
 )
 
 
+SUCCESS_STATUSES = {"ready", "ready_legacy_edge"}
+
+
 def run_doctor(start: Path | None = None) -> dict[str, object]:
     """Run workspace, environment, edge, and auth readiness checks."""
     start_path = (start or Path.cwd()).resolve()
@@ -250,6 +253,12 @@ print(json.dumps({
             }
         )
     return result
+
+
+def doctor_exit_code(result: dict[str, object]) -> int:
+    """Return the CLI exit code for a doctor result."""
+    status = str(result.get("status") or "").strip()
+    return 0 if status in SUCCESS_STATUSES else 1
 
 
 def render_doctor_report(result: dict[str, object]) -> str:
