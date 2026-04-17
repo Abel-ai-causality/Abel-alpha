@@ -607,6 +607,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     )
 
     python_bin = args.python_bin or resolve_default_python_bin(branch)
+    context_mode = "injected"
     command = [
         python_bin,
         "-m",
@@ -614,8 +615,6 @@ def run_branch_round(args: argparse.Namespace) -> int:
         "evaluate",
         "--workdir",
         str(branch),
-        "--context-json",
-        str(context_path),
         "--output-json",
         str(result_path),
         "--output-md",
@@ -625,6 +624,10 @@ def run_branch_round(args: argparse.Namespace) -> int:
         "--start",
         backtest_start,
     ]
+    if edge_supports_context_json(python_bin, session):
+        command[6:6] = ["--context-json", str(context_path)]
+    else:
+        context_mode = "recorded_only_legacy_edge"
     completed = subprocess.run(command, cwd=session, capture_output=True, text=True)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     decision = alpha_decision(rows, result)
@@ -647,6 +650,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
             summary=args.summary,
             next_step=args.next_step,
             actions=args.action,
+            context_mode=context_mode,
             context_path=str(context_path.relative_to(session)),
             result_path=str(result_path.relative_to(session)),
             report_path=str(report_path.relative_to(session)),
@@ -700,6 +704,11 @@ def run_branch_round(args: argparse.Namespace) -> int:
         render_session(session)
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
+    if context_mode != "injected":
+        print(
+            "Warning: installed Abel-edge does not support --context-json yet; "
+            "alpha context was recorded but not injected into run_strategy()."
+        )
     print(f"Alpha context: {context_path.relative_to(session)}")
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
@@ -959,6 +968,7 @@ See `thesis.md` for the branch hypothesis.
 
 ## Latest Artifacts
 
+- alpha_context_mode: `{latest_note.get("context_mode", "not recorded")}`
 - alpha_context: `{latest_note.get("context_path", "not recorded")}`
 - edge_result: `{latest_note.get("result_path", latest.get("result_path", "not recorded"))}`
 - edge_report: `{latest_note.get("report_path", latest.get("report_path", "not recorded"))}`
@@ -1251,6 +1261,25 @@ def load_discovery(session: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def edge_supports_context_json(python_bin: str, cwd: Path) -> bool:
+    completed = subprocess.run(
+        [
+            python_bin,
+            "-c",
+            (
+                "import inspect\n"
+                "from causal_edge.research.evaluate import run_evaluation\n"
+                "print('context_json' in inspect.signature(run_evaluation).parameters)\n"
+            ),
+        ],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == "True"
+
+
 def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
     if not round_id:
         return {}
@@ -1266,6 +1295,7 @@ def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
             "failures",
             "summary",
             "next_step",
+            "context_mode",
             "context_path",
             "result_path",
             "report_path",
@@ -1326,6 +1356,7 @@ def render_round_note(**kwargs) -> str:
 
 ## Artifacts
 
+- context_mode: `{kwargs.get("context_mode", "injected")}`
 - context_path: `{kwargs.get("context_path", "not recorded")}`
 - result_path: `{kwargs.get("result_path", "not recorded")}`
 - report_path: `{kwargs.get("report_path", "not recorded")}`

@@ -28,6 +28,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
+                "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
             },
@@ -46,6 +47,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
+                "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
             },
@@ -58,6 +60,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         "python_env": "pass" if python_path.exists() else "fail",
         "causal_edge_import": "not_run",
         "causal_edge_cli": "not_run",
+        "edge_context_json": "not_run",
         "auth": "not_run",
         "edge_login_fallback": "not_run",
     }
@@ -124,6 +127,24 @@ print(json.dumps({
 """,
     )
     checks["causal_edge_cli"] = "pass" if cli_check.get("ok") else "fail"
+
+    context_contract_check = run_python_json(
+        python_path,
+        root,
+        """
+import inspect
+import json
+
+from causal_edge.research.evaluate import run_evaluation
+
+print(json.dumps({
+    "ok": "context_json" in inspect.signature(run_evaluation).parameters,
+}))
+""",
+    )
+    checks["edge_context_json"] = (
+        "pass" if context_contract_check.get("ok") else "fail"
+    )
 
     auth_check = run_python_json(
         python_path,
@@ -193,8 +214,17 @@ print(json.dumps({
     if not auth_check.get("ok"):
         result.update(
             {
-                "status": "auth_missing",
-                "summary": "Workspace environment is ready, but Abel auth was not detected.",
+                "status": (
+                    "auth_missing"
+                    if checks["edge_context_json"] == "pass"
+                    else "auth_missing_legacy_edge"
+                ),
+                "summary": (
+                    "Workspace environment is ready, but Abel auth was not detected."
+                    if checks["edge_context_json"] == "pass"
+                    else "Workspace environment is ready, but Abel auth is missing and the installed "
+                    "Abel-edge does not yet support the alpha context contract."
+                ),
                 "next_step": (
                     "Install causal-abel and complete OAuth, or run "
                     f"`{python_path} -m causal_edge.cli login --json --no-browser`"
@@ -203,13 +233,22 @@ print(json.dumps({
         )
         return result
 
-    result.update(
-        {
-            "status": "ready",
-            "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
-            "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
-        }
-    )
+    if checks["edge_context_json"] == "pass":
+        result.update(
+            {
+                "status": "ready",
+                "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
+                "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
+            }
+        )
+    else:
+        result.update(
+            {
+                "status": "ready_legacy_edge",
+                "summary": "Workspace is usable, but the installed Abel-edge does not yet support the alpha context contract.",
+                "next_step": "Upgrade Abel-edge, then run `abel-alpha init-session --ticker <TICKER> --exp-id <session-id>`.",
+            }
+        )
     return result
 
 

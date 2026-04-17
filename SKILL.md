@@ -57,6 +57,8 @@ The session fixes one backtest `start`; `run-branch` leaves `end` unset so each 
 Each `run-branch` also writes `outputs/<round-id>-alpha-context.json` and injects it into
 `causal-edge evaluate --context-json`, so strategy code should prefer `context["discovery"]`
 and `context["discovery_path"]` over hard-coded relative paths.
+If the installed `Abel-edge` is older and does not support that argument yet, Abel-alpha
+falls back to compatibility mode and `abel-alpha doctor` will report the missing capability.
 Your job: write the strategy implementation.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
