@@ -70,6 +70,7 @@ STRATEGY_TEMPLATE = '''"""Strategy for {ticker}. Fill in run_strategy().
 Final strategy output must satisfy abs(position) <= 1.
 Default backtest behavior should use the provided start date and treat end=None as the latest available date.
 If provided, context contains workspace/session/branch/discovery metadata from Abel-alpha.
+Prefer context["discovery"] and context["discovery_path"] over hard-coded relative paths.
 """
 
 import numpy as np
@@ -597,6 +598,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
                 branch=branch,
                 session=session,
                 discovery=discovery,
+                round_id=round_id,
                 backtest_start=backtest_start,
             ),
             indent=2,
@@ -645,6 +647,10 @@ def run_branch_round(args: argparse.Namespace) -> int:
             summary=args.summary,
             next_step=args.next_step,
             actions=args.action,
+            context_path=str(context_path.relative_to(session)),
+            result_path=str(result_path.relative_to(session)),
+            report_path=str(report_path.relative_to(session)),
+            handoff_path=str(handoff_path.relative_to(session)),
         ),
         encoding="utf-8",
     )
@@ -694,6 +700,10 @@ def run_branch_round(args: argparse.Namespace) -> int:
         render_session(session)
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
+    print(f"Alpha context: {context_path.relative_to(session)}")
+    print(f"Edge result: {result_path.relative_to(session)}")
+    print(f"Edge validation: {report_path.relative_to(session)}")
+    print(f"Edge handoff: {handoff_path.relative_to(session)}")
     return 0 if result.get("verdict") == "PASS" else 1
 
 
@@ -773,8 +783,12 @@ def check_session(session: Path, *, strict: bool) -> int:
             if not round_id:
                 failures.append(f"{branch_dir.name}: row missing round_id")
                 continue
-            if not (branch_dir / "rounds" / f"{round_id}.md").exists():
+            round_note_path = branch_dir / "rounds" / f"{round_id}.md"
+            if not round_note_path.exists():
                 failures.append(f"{branch_dir.name}: missing round note {round_id}.md")
+                note = {}
+            else:
+                note = read_round_note(branch_dir, round_id)
             if not (session / row.get("result_path", "")).exists():
                 failures.append(
                     f"{branch_dir.name}: missing edge result {row.get('result_path', '')}"
@@ -786,6 +800,17 @@ def check_session(session: Path, *, strict: bool) -> int:
             if not (session / row.get("handoff_path", "")).exists():
                 failures.append(
                     f"{branch_dir.name}: missing edge handoff {row.get('handoff_path', '')}"
+                )
+            context_rel = note.get("context_path", "")
+            expected_context = branch_dir / "outputs" / f"{round_id}-alpha-context.json"
+            if context_rel:
+                if not (session / context_rel).exists():
+                    failures.append(
+                        f"{branch_dir.name}: missing alpha context {context_rel}"
+                    )
+            elif strict and expected_context.exists():
+                failures.append(
+                    f"{branch_dir.name}: round note missing context_path for {round_id}"
                 )
             if strict:
                 validate_edge_handoff(session, branch_dir.name, row, failures)
@@ -931,6 +956,13 @@ See `thesis.md` for the branch hypothesis.
 - decision: `{latest.get("decision", "pending")}`
 - summary: `{latest.get("description", "No rounds recorded yet.")}`
 - next_step: `{latest_note.get("next_step", "Review the latest round note for the next move.")}`
+
+## Latest Artifacts
+
+- alpha_context: `{latest_note.get("context_path", "not recorded")}`
+- edge_result: `{latest_note.get("result_path", latest.get("result_path", "not recorded"))}`
+- edge_report: `{latest_note.get("report_path", latest.get("report_path", "not recorded"))}`
+- edge_handoff: `{latest_note.get("handoff_path", latest.get("handoff_path", "not recorded"))}`
 
 ## Decision Rationale
 
@@ -1093,17 +1125,24 @@ def build_branch_context(
     branch: Path,
     session: Path,
     discovery: dict,
+    round_id: str,
     backtest_start: str,
 ) -> dict:
     """Build the structured context passed into causal-edge evaluate."""
     workspace_root = find_workspace_root(branch)
     return {
+        "schema_version": 1,
         "workspace_root": str(workspace_root) if workspace_root is not None else None,
+        "exp_id": session.name,
+        "branch_id": branch.name,
+        "round_id": round_id,
         "session_dir": str(session.resolve()),
         "branch_dir": str(branch.resolve()),
+        "outputs_dir": str((branch / "outputs").resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
         "ticker": discovery.get("ticker", session.parent.name.upper()),
         "backtest_start": backtest_start,
+        "discovery": discovery,
     }
 
 
@@ -1227,6 +1266,10 @@ def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
             "failures",
             "summary",
             "next_step",
+            "context_path",
+            "result_path",
+            "report_path",
+            "handoff_path",
         ):
             prefix = f"- {key}: `"
             if line.startswith(prefix) and line.endswith("`"):
@@ -1280,6 +1323,13 @@ def render_round_note(**kwargs) -> str:
 - total_return: `{metrics.get("total_return", 0) * 100:.1f}%`
 - max_dd: `{metrics.get("max_dd", 0) * 100:.1f}%`
 - failures: `{"; ".join(result.get("failures", [])) or "none"}`
+
+## Artifacts
+
+- context_path: `{kwargs.get("context_path", "not recorded")}`
+- result_path: `{kwargs.get("result_path", "not recorded")}`
+- report_path: `{kwargs.get("report_path", "not recorded")}`
+- handoff_path: `{kwargs.get("handoff_path", "not recorded")}`
 
 ## Conclusion
 
