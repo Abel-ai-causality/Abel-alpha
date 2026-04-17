@@ -84,12 +84,11 @@ If you fetch market data, pass an explicit `limit=...` instead of relying on API
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
 do not hide setup failures behind synthetic flat outputs.
+Current readiness warning: {readiness_warning}
+Recommended starts: {recommended_starts}
 """
-
+ 
 from __future__ import annotations
-
-import numpy as np
-import pandas as pd
 
 from causal_edge.engine.base import StrategyEngine
 
@@ -121,14 +120,21 @@ class BranchEngine(StrategyEngine):
         #     limit=600,
         # )
         # Build signals from those aligned bars, then return self.finalize_signals(...)
-        dates = pd.date_range(start, periods=120, freq="D", tz="UTC")
-        prices = np.full(len(dates), 100.0, dtype=float)
-        positions = np.zeros(len(dates), dtype=float)
-        return positions, dates, prices
+        readiness = self.research_data_readiness()
+        recommendations = readiness.get("recommended_starts") or {{}}
+        target_start = recommendations.get("target_recommended_start")
+        common_start = recommendations.get("common_recommended_start")
+        raise NotImplementedError(
+            "This branch is still using the default Abel-alpha scaffold. "
+            "Replace the stub in engine.py before recording a real round. "
+            f"requested_start={{start}}; target={{target}}; ready_drivers={{len(ready_drivers)}}; "
+            f"recommended_target_start={{target_start or 'n/a'}}; "
+            f"recommended_common_start={{common_start or 'n/a'}}. "
+            "Use `abel-alpha debug-branch` while wiring data helpers if you want a quick dry run."
+        )
 
     def get_latest_signal(self):
-        positions, dates, _ = self.compute_signals()
-        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
+        return {{"position": 0.0, "date": "not-run"}}
 '''
 
 
@@ -249,6 +255,11 @@ def main() -> int:
         default=None,
         help="Interpreter used to run causal-edge evaluate (defaults to the workspace python when available)",
     )
+    run_branch.add_argument(
+        "--allow-untouched-template",
+        action="store_true",
+        help="Allow recording a round from the untouched default engine scaffold",
+    )
 
     debug_branch = sub.add_parser(
         "debug-branch",
@@ -313,18 +324,29 @@ def main() -> int:
         print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
         return 0
     if args.command == "init-branch":
-        branch = init_branch_dir(resolve_workspace_arg_path(args.session), args.branch_id)
+        session = resolve_workspace_arg_path(args.session)
+        discovery = load_discovery(session)
+        branch = init_branch_dir(session, args.branch_id)
         print(f"Created Abel-alpha branch at {branch}")
         print(f"  engine: {branch / 'engine.py'}")
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
         print("")
+        warning = build_readiness_warning(discovery)
+        if warning:
+            print("Readiness:")
+            print(f"  warning: {warning}")
+            for line in readiness_recommendation_lines(discovery):
+                print(f"  recommended_start: {line}")
+            print("")
         print("Reminders:")
         print("  If you fetch bars, pass an explicit `limit=...`.")
         print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
+        print("  Replace the default scaffold stub before recording the first real round.")
         print("")
         print("Next:")
         print(f"  edit {branch / 'engine.py'}")
+        print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
     if args.command == "run-branch":
@@ -793,9 +815,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         engine = branch / "engine.py"
         if not engine.exists():
             engine.write_text(
-                ENGINE_TEMPLATE.format(
-                    ticker=discovery.get("ticker", session.parent.name.upper())
-                ),
+                render_default_engine_template(discovery, session),
                 encoding="utf-8",
             )
         append_tsv_row(
@@ -822,6 +842,18 @@ def run_branch_round(args: argparse.Namespace) -> int:
     session = branch.parent.parent
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
+    warning = build_readiness_warning(discovery)
+    if branch_uses_default_scaffold(branch, discovery, session) and not args.allow_untouched_template:
+        print(
+            "Refusing to record a round from the untouched default engine scaffold. "
+            "Edit engine.py first, or use `abel-alpha debug-branch` while wiring the first real signal.",
+            file=sys.stderr,
+        )
+        if warning:
+            print(f"Readiness warning: {warning}", file=sys.stderr)
+        for line in readiness_recommendation_lines(discovery):
+            print(f"Recommended start: {line}", file=sys.stderr)
+        return 2
     rows = read_tsv_rows(branch / "results.tsv")
     round_id = f"round-{len(rows) + 1:03d}"
     result_path = branch / "outputs" / f"{round_id}-edge-result.json"
@@ -842,7 +874,6 @@ def run_branch_round(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
-    warning = build_readiness_warning(discovery)
     if warning:
         print(
             f"Warning: {warning}",
@@ -1304,6 +1335,11 @@ def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -
     ]
     leader = select_leader(branches)
     executive = "No validated rounds yet. Start the first branch to establish the session baseline."
+    if branches and not any(branch["rows"] for branch in branches):
+        executive = (
+            f"{len(branches)} branch(es) have been initialized, but no validated rounds exist yet. "
+            f"Edit `{branches[0]['branch_id']}` and use `abel-alpha debug-branch` before recording the first round."
+        )
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
         leader_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
@@ -1320,9 +1356,10 @@ def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -
 
     branch_lines = (
         "\n".join(
-            f"1. `{branch['branch_id']}` - {len(branch['rows'])} rounds, latest `{branch['rows'][-1].get('round_id', 'none')}` {branch['rows'][-1].get('decision', 'pending')}"
+            f"1. `{branch['branch_id']}` - {len(branch['rows'])} rounds, latest "
+            f"`{(branch['rows'][-1] if branch['rows'] else {}).get('round_id', 'none')}` "
+            f"{(branch['rows'][-1] if branch['rows'] else {}).get('decision', 'pending')}"
             for branch in branches
-            if branch["rows"]
         )
         or "1. `No branches yet.`"
     )
@@ -1386,7 +1423,7 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 
 ## Next Step
 
-{session_next_step(branches)}
+{session_next_step(branches, discovery)}
 """
 
 
@@ -1410,7 +1447,7 @@ generated by Abel-alpha narrative layer
 - branch_id: `{branch["branch_id"]}`
 - ticker: `{latest.get("ticker", branch["ticker"])}`
 - exp_id: `{exp_id}`
-- current_status: `{latest.get("decision", "exploring")}`
+- current_status: `{latest.get("decision", "scaffolded" if not rows else "exploring")}`
 - total_rounds: `{len(rows)}`
 - latest_round: `{latest.get("round_id", "none")}`
 - validation_status: `{latest.get("verdict", "not_validated")}`
@@ -1423,7 +1460,7 @@ See `thesis.md` for the branch hypothesis.
 
 - decision: `{latest.get("decision", "pending")}`
 - summary: `{latest.get("description", "No rounds recorded yet.")}`
-- next_step: `{latest_note.get("next_step", "Review the latest round note for the next move.")}`
+- next_step: `{latest_note.get("next_step", "Edit engine.py and use `abel-alpha debug-branch` before the first recorded round.")}`
 
 ## Latest Diagnostics
 
@@ -1826,8 +1863,9 @@ def build_branch_snapshot_line(branch: dict) -> str:
     )
 
 
-def session_next_step(branches: list[dict]) -> str:
+def session_next_step(branches: list[dict], discovery: dict) -> str:
     leader = select_leader(branches)
+    pending = [branch for branch in branches if not branch["rows"]]
     has_historical_keep = any(
         row.get("decision") == "keep"
         for branch in branches
@@ -1847,6 +1885,22 @@ def session_next_step(branches: list[dict]) -> str:
         return f"Continue improving `{keep[-1]['branch_id']}` or branch from the discarded ideas now that both keep and discard outcomes are recorded."
     if keep:
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
+    if pending:
+        branch = pending[-1]
+        warning = build_readiness_warning(discovery)
+        recommendations = ", ".join(readiness_recommendation_lines(discovery))
+        guidance = (
+            f"Edit `{branch['branch_id']}` and use `abel-alpha debug-branch --branch {branch['branch_dir']}` "
+            "to wire the first real signal before recording a round."
+        )
+        if warning:
+            suffix = (
+                f" Also revisit `backtest_start` first ({recommendations})."
+                if recommendations
+                else " Also revisit `backtest_start` first."
+            )
+            return guidance + suffix
+        return guidance
     if leader and leader["rows"]:
         note = read_round_note(leader["branch_dir"], leader["rows"][-1].get("round_id", ""))
         if not has_explicit_hypothesis(note.get("hypothesis", "")):
@@ -1913,6 +1967,21 @@ def load_discovery(session: Path) -> dict:
             "K_discovery": 0,
         }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def render_default_engine_template(discovery: dict, session: Path) -> str:
+    return ENGINE_TEMPLATE.format(
+        ticker=discovery.get("ticker", session.parent.name.upper()),
+        readiness_warning=build_readiness_warning(discovery) or "none",
+        recommended_starts=", ".join(readiness_recommendation_lines(discovery)) or "none",
+    )
+
+
+def branch_uses_default_scaffold(branch: Path, discovery: dict, session: Path) -> bool:
+    engine = branch / "engine.py"
+    if not engine.exists():
+        return False
+    return engine.read_text(encoding="utf-8") == render_default_engine_template(discovery, session)
 
 
 def edge_supports_context_json(python_bin: str, cwd: Path) -> bool:
