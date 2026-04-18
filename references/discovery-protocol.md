@@ -1,80 +1,56 @@
 # Discovery Protocol
 
-## Quick Start
+## Purpose
 
-```bash
-abel-alpha init-session --ticker <TICKER> --exp-id <exp-id>
-# → research/<ticker>/<exp_id>/discovery.json created for Abel-alpha organization
-```
+Discovery answers one question only:
 
-Before running live discovery, use `abel-alpha doctor` to confirm whether auth
-is already available or whether `causal-abel` OAuth still needs to be completed.
-Without `--discover`, the created `discovery.json` is intentionally a pending
-placeholder rather than a live Abel result.
+Which causal candidates are worth considering for this session?
 
-## The Multihop Protocol
+It does not define the branch runtime by itself.
 
-Direct Abel parents are often not the best predictors. Multihop consistently outperforms.
+## Session Model
 
-```
-Direct parents:    Abel says X → TARGET
-Markov blanket:    prioritize parents > children > spouses/co-parents
-Hop-2 parents:     X → CHILD → TARGET (via children's parents)
-Sector peers:      same industry as direct parents, liquid
-Crypto peers:      low-priority supplement for crypto targets
-```
+After live discovery, the session owns:
 
-Production proof:
-- AAPL: 5 direct → 25 multihop → Sharpe 1.69, 15/15 PASS
-- BNB: 10 direct, only 2 in final top-18. +6 hop-2 + 7 sector peers → IC +34%
-- TON: 4 of top 7 from Markov blanket, not direct parents
+- `discovery.json`: candidate snapshot
+- `readiness.json`: advisory coverage report
 
-**Rule: every new asset starts with parents + blanket + multihop. Decide architecture after.**
+The branch then selects from that session context in `branch.yaml`.
 
-## 5-Step Core
+## Default Selection Order
 
-1. **Parents** — `graph.neighbors(node, scope=parents)`
-2. **Blanket** — `extensions.abel.markov_blanket(node)` — within the blanket, prioritize parents first, then children, then spouses/co-parents
-3. **Children** — `graph.neighbors(node, scope=children)` — for hop-2 expansion
-4. **Multihop** — for each child ≠ target, get its parents. Add novel ones as hop-2
-5. **Crypto peers** — for crypto targets, optionally check `graph.paths` from major crypto assets after higher-priority causal candidates
+Use this as a priority order, not a hard formula:
 
-K is auto-computed by `causal-edge evaluate` from engine.py source.
-You don't need to track K manually.
+1. direct parents
+2. other Markov blanket nodes
+3. children-derived hop-2 candidates
+4. sector or market peers only when they add a real mechanism
 
-Discovery belongs to the exploration session first, not to only one branch file. Use the
-session README to explain how discovery led to one or more candidate branches, then keep the
-branch-specific thesis and rounds inside each `branches/<branch-id>/` directory.
+## Branch Cut
 
-## Enrichment
+When moving from session discovery into a branch:
 
-- **Verify paths** — confirm causal transmission for top candidates
-- **Sector peers** — 2-3 same-sector liquid equities per direct parent
-- **Crypto peers** — low-priority, asset-dependent supplement. BNB: +8 crypto peers was #1 breakthrough. TON: crypto peers all failed OOS. Test, don't assume.
+- choose a small initial driver set
+- write it explicitly into `branch.yaml`
+- use readiness to understand coverage, not to auto-ban ideas
+- run `prepare-branch` before a recorded round
 
-## Selection
+## Readiness Role
 
-Keep selection open-ended. Use priority order, not a rigid formula:
-- direct parents first
-- then Markov blanket nodes, with `parents > children > spouses/co-parents`
-- then hop-2 candidates
-- then sector peers
-- then crypto peers as a low-priority supplement
+Readiness is advisory.
 
-`data_availability × causal_proximity` remains a useful heuristic inside each tier, not a hard global ranking rule:
-- `data_availability`: 1.0 daily, 0.5 weekly, 0 unavailable
-- `causal_proximity`: 1/hop_depth (direct=1.0, hop-2=0.5, hop-3=0.33)
+Use it to answer:
 
-Select top 15-25 for equities, 15-20 for crypto.
+- how early target data is observed
+- which discovery tickers have partial or stronger coverage
+- whether strict overlap is likely expensive
 
-## Fallback Without Abel
+Do not use it to collapse every branch onto the latest common start unless the
+branch really depends on strict overlap.
 
-If no API key: sector heuristics — liquid sector peers + market factors.
-Treat this as continuity mode, not equal evidence to Abel discovery. Higher K, lower quality, and lower confidence, but the experiment loop still works.
-SOL had zero Abel coverage; fallback crypto peer voting still produced Sharpe 2.06 (13/13 PASS).
-Report fallback outcomes as heuristic discoveries, not as Abel-equivalent causal discoveries.
+## Cache Role
 
-## Caching
+Discovery does not own market data.
 
-Cache parent lists to disk. Abel's graph is structurally stable (DGP, not transient).
-Refresh quarterly, not daily.
+Prepared branch inputs should resolve through the edge-owned cache path, not
+through ad hoc branch-local fetching conventions.

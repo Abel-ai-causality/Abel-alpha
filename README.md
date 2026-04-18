@@ -1,6 +1,15 @@
 # abel-alpha
 
-**Workspace-first Abel alpha discovery for AI agents. Three layers: code enforces, skill guides, agent discovers.**
+Workspace-first strategy research for agents.
+
+The current model is intentionally simple:
+
+- session owns `discovery.json` and `readiness.json`
+- edge owns the market-data cache
+- branch owns `branch.yaml`
+- `prepare-branch` resolves inputs before a recorded run
+
+## Standard Flow
 
 ```bash
 python -m venv .venv
@@ -8,183 +17,65 @@ python -m venv .venv
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -e .
+
 abel-alpha workspace init my-lab
 cd my-lab
-abel-alpha workspace status
 abel-alpha env init
 abel-alpha doctor
-abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover --backtest-start 2020-01-01
-abel-alpha set-backtest-start --session research/tsla/tsla-v1 --target-safe
-abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
-abel-alpha set-hypothesis --branch research/tsla/tsla-v1/branches/graph-v1 --text "Parent liquidity expansion should lead TSLA higher over the next 5 sessions; invalidate if the edge flips negative after lagging the driver."
-abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
-abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
-abel-alpha status --session research/tsla/tsla-v1
-abel-alpha check --session research/tsla/tsla-v1 --strict
-```
 
-`abel-alpha workspace init` creates the standard workspace scaffold and
-manifest. The package install still happens from the `Abel-alpha` source
-checkout; the workspace is where research artifacts live. `abel-alpha env init`
-prepares the workspace `.venv`, installs `Abel-alpha`, and installs
-`Abel-edge` from GitHub `main` by default until formal releases exist. Use
-`--edge-source` only for local development overrides. `doctor` then inspects
-the workspace against that configured target. Inside a workspace,
-`abel-alpha init-session` defaults to the manifest-backed `research/` root
-instead of relying on an implicit current-directory layout.
-If the selected Python cannot create a venv in a locked-down environment, use
-`abel-alpha env init --runtime-python /path/to/python` to point alpha at an
-existing interpreter instead.
-
-## First-Use Flow
-
-Treat this as the standard path for both humans and agents:
-
-1. Install `Abel-alpha` from the local source checkout.
-2. Create a workspace with `abel-alpha workspace init <name>`.
-3. Run `abel-alpha env init` inside that workspace.
-4. Run `abel-alpha doctor` and follow its next step.
-5. If auth is missing, install `causal-abel`, complete OAuth once, and rerun `doctor`.
-6. Only after the workspace is diagnosably ready, start `init-session`, `init-branch`, and `run-branch`.
-
-If `Abel-alpha` was installed as a skill from GitHub, the installed skill
-directory itself is the local source checkout. Run `pip install -e .` from that
-directory to expose the packaged `abel-alpha` CLI before creating a workspace.
-
-`abel-alpha doctor` is the default readiness gate:
-
-- `ready`: workspace, edge, and auth are ready
-- `auth_missing`: auth is the only missing piece
-- `env_missing`, `edge_missing`, or `edge_contract_missing`: rebuild the workspace runtime with `abel-alpha env init`
-
-If you want live Abel discovery, complete auth before running `init-session --discover` or `causal-edge discover <TICKER>`:
-
-```bash
-npx --yes skills add https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills --skill causal-abel -y
-# use -g for a global install in the current agent platform
-# Abel-alpha does not auto-install causal-abel
-# complete causal-abel OAuth once, then causal-edge should reuse the same auth
+# if auth is missing, install causal-abel and complete OAuth once
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+
+# make branch inputs explicit
+edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
+edit research/tsla/tsla-v1/branches/graph-v1/engine.py
+
+abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha status --session research/tsla/tsla-v1
+abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
-If `causal-edge discover <TICKER>` still reports a missing Abel key after OAuth, `causal-edge` will first read the current project `.env`, then `ABEL_AUTH_ENV_FILE`, then shared `causal-abel` auth files from `.agents/skills/causal-abel/.env.skill` and known OpenCode/Codex global skill roots. That lets agent-driven installs reuse the `causal-abel` auth file without copying the key into each workspace. Use `causal-edge login` only when you want the standalone fallback that stores `ABEL_API_KEY` directly for the current project.
-When you use `causal-edge login` inside a workspace, alpha-managed runs now
-export that workspace `.env` through `ABEL_AUTH_ENV_FILE` so session and branch
-subprocesses resolve the same auth file deterministically.
+## Current Boundaries
 
-Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. Alpha also runs edge-owned data verification immediately after discovery and records which tickers cover the requested start, which remain partial, and which are missing or broken. `init-session` fixes the initial session-level backtest start date, and `abel-alpha set-backtest-start` lets you later move that start explicitly to an exact date, the target-safe hint, or the denser coverage hint after reviewing readiness. `run-branch` passes the current session `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
-Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
+### Session artifacts
 
-Branch hypotheses are now persistent branch state rather than throwaway per-round CLI text. You can seed or refine that state with `abel-alpha set-hypothesis --branch ... --text "..."`, and later rounds reuse the latest explicit hypothesis automatically until you change it.
+- `discovery.json`: candidate universe only
+- `readiness.json`: advisory coverage report only
 
-Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Research engine code should prefer the injected `self.context` object, especially `self.context["discovery"]` and `self.context["discovery_path"]`, instead of assuming a relative workspace layout.
-`abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
-When you want fast, non-recording diagnostics while iterating on a branch, use `abel-alpha debug-branch --branch ...`. That delegates to edge's diagnostics-first debug surface without appending a new round to the narrative ledger.
-For first-pass strategy experiments, two common pitfalls are worth avoiding:
-- pass an explicit `limit=...` when fetching bars instead of relying on API defaults
-- avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives
+### Branch artifacts
 
-## Interface Policy
+- `branch.yaml`: target, requested start, overlap mode, selected drivers
+- `inputs/dependencies.json`: prepared input/cache view
+- `engine.py`: signal implementation
 
-Use the packaged `abel-alpha` CLI as the only supported interface for research
-workflows. New docs, scripts, and agents should call `abel-alpha ...` directly.
+### Runtime
 
-```mermaid
-flowchart TD
-    D["DISCOVER — Abel CAP parents + blanket"]
-    B["BUILD — candidate branch in session workspace"]
-    V{"VALIDATE — audited gate + baseline comparison"}
-    L["LEARN — keep/discard and branch next round"]
+`run-branch` should use prepared branch inputs. It is not the place to invent
+the branch definition.
 
-    D -->|"K honest"| B
-    B -->|"no look-ahead"| V
-    V -->|"PASS + improve = KEEP"| L
-    V -.->|"FAIL / no improve = DISCARD"| B
-    L -->|"next cycle"| D
-```
+`promote-branch` currently creates a clean promotion bundle, not a full formal
+strategy scaffold.
 
-## Four-Layer Design
+## Rules For Agents
 
-```
-L1: Raw evaluation (LLM-agnostic)   → causal-edge CLI
-    K auto-computed from engine.py AST
-    validate_strategy() runs every experiment
-    emits raw verdict, metrics, failures, K
+1. Do not invent your own workspace layout.
+2. Edit `branch.yaml` before trying to wire `engine.py`.
+3. Run `prepare-branch` before a recorded round.
+4. Treat readiness as advisory, not as a hard branch filter.
+5. Prefer injected context over hard-coded file paths.
 
-L2: Research organization            → Abel-alpha narrative layer
-    session / branch / round structure
-    keep/discard and baseline updates
-    README / thesis / memory generation
+## Auth
 
-L3: Judgment guidance (skill text)   → SKILL.md
-    Explore vs exploit distinction
-    Micro-cap parents = the signal
-    Validation failures = research direction
-    When to declare honest failure
+`abel-alpha` does not auto-install `causal-abel`.
 
-L4: Agent autonomy (留白)            → engine.py
-    What architecture, what features, what ML
-    Every asset is different
-```
+If `doctor` reports missing auth, install `causal-abel`, complete OAuth once,
+and rerun `doctor`. `causal-edge login` remains the standalone fallback.
 
-**L1 protects all models. L2 improves strong models. L3 is where alpha lives.**
+## References
 
-## Why Causal
-
-Correlation breaks more easily when regimes change. Causation is the default search prior because it is more likely to persist (Pearl, 1995).
-
-- **K is small** — Abel gives ~10 justified parents vs ~10,000 blind scan → DSR honest
-- **Signals persist** — causal links survive bull→bear transitions
-- **Discovery is automated** — Abel CAP over 11K nodes, agent handles the rest
-
-Correlation-derived signals are allowed, but only as a second-class supplement to a causal thesis. They must earn their place empirically and should not replace Abel-driven discovery as the default search process.
-
-Without Abel, fallback discovery is still useful for research continuity, but it carries weaker discovery evidence: K is effectively higher, confidence is lower, and results should not be described as equivalent to Abel-led causal discovery.
-
-## Production Proof
-
-| | Sharpe | Validation | Backtest |
-|---|--------|------------|----------|
-| Crypto A | 4.27 | 15/15 PASS | 1,400+ days |
-| Crypto B | 2.82 | 15/15 PASS | 1,500+ days |
-| Crypto C | 2.10 | 13/13 PASS | 1,100+ days |
-| Equity A | 2.57 | 15/15 PASS | 1,000+ days |
-| Equity B | 1.69 | 15/15 PASS | 1,200+ days |
-| Crypto D | 2.06 | 13/13 PASS | 1,300+ days |
-
-All DSR-deflated (honest K from Abel, not blind scan). All pass [causal-edge](https://github.com/Abel-ai-causality/Abel-edge) full validation. 200+ serial experiments across 6 assets. Zero loss years on best strategies.
-
-Build your own: install `Abel-alpha` from this repo, install `causal-abel` from `Abel-skills/tree/main/skills` if you want shared live Abel auth, then run `abel-alpha init-session --ticker <TICKER> --exp-id <id> --discover`.
-
-## Abel-Pro Mapping
-
-- Abel-alpha worktree for the Abel-Pro integration: `D:\codes\Abel-alpha\.tree\abel-pro`
-- Abel-alpha branch for that worktree: `abel-pro`
-- Paired Abel-edge worktree for validation and execution: `D:\codes\open_source\Abel-edge\.tree\abel-pro-demo`
-- Paired Abel-edge branch: `abel-pro-demo`
-- Abel auth and data environment defaults to prod
-
-## Files
-
-```
-SKILL.md                  ← Agent reads this. 280 words. 4 judgment calls.
-references/
-  experiment-loop.md      ← KEEP rule, explore/exploit, when to stop
-  discovery-protocol.md   ← Multihop, blanket, fallback
-  constraints.md          ← Structural strategy constraints
-  proven-patterns.md      ← Battle evidence for inspiration
-  methodology.md          ← Axioms vs constraints
-```
-
-## The Ecosystem
-
-```
-Abel CAP       → causal graph (discovery)
-abel-alpha     → research methodology + organization (this skill)
-causal-edge    → raw validation facts + edge-owned handoff contract
-causal-abel    → Abel API access (cap_probe.py)
-```
-
-## License
-
-MIT. Built by [Abel AI](https://github.com/Abel-ai-causality/).
+- `references/experiment-loop.md`
+- `references/discovery-protocol.md`
+- `references/constraints.md`
