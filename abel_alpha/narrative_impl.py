@@ -45,6 +45,7 @@ EVENTS_HEADER = [
 ]
 
 DEFAULT_BACKTEST_START = "2020-01-01"
+SESSION_STATE_FILENAME = "session_state.json"
 
 RESULTS_HEADER = [
     "exp_id",
@@ -234,6 +235,28 @@ def main() -> int:
         help="Maximum Abel nodes to record per discovery call",
     )
 
+    set_backtest_start = sub.add_parser(
+        "set-backtest-start",
+        help="Update the session-level backtest start and refresh readiness",
+    )
+    set_backtest_start.add_argument("--session", required=True)
+    start_group = set_backtest_start.add_mutually_exclusive_group(required=True)
+    start_group.add_argument(
+        "--date",
+        default=None,
+        help="Explicit YYYY-MM-DD backtest start",
+    )
+    start_group.add_argument(
+        "--target-safe",
+        action="store_true",
+        help="Use the target-safe start hint from readiness",
+    )
+    start_group.add_argument(
+        "--coverage-hint",
+        action="store_true",
+        help="Use the dense-overlap coverage hint from readiness",
+    )
+
     init_branch = sub.add_parser("init-branch", help="Create a branch under a session")
     init_branch.add_argument("--session", required=True)
     init_branch.add_argument("--branch-id", required=True)
@@ -322,6 +345,34 @@ def main() -> int:
         print("")
         print("Next:")
         print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
+        return 0
+    if args.command == "set-backtest-start":
+        session = resolve_workspace_arg_path(args.session)
+        backtest_start, source = resolve_backtest_start_request(
+            session=session,
+            explicit_date=args.date,
+            use_target_safe=args.target_safe,
+            use_coverage_hint=args.coverage_hint,
+        )
+        discovery = update_backtest_start(
+            session=session,
+            backtest_start=backtest_start,
+            source=source,
+        )
+        print(f"Updated Abel-alpha session at {session}")
+        print(f"  backtest_start: {backtest_start}")
+        print(f"  source: {source}")
+        readiness_summary = format_data_readiness_summary(discovery)
+        if readiness_summary:
+            print(f"  data_readiness: {readiness_summary}")
+        for line in readiness_recommendation_lines(discovery):
+            print(f"  {line}")
+        warning = build_readiness_warning(discovery)
+        if warning:
+            print(f"  warning: {warning}")
+        print("")
+        print("Next:")
+        print(f"  abel-alpha status --session {session}")
         return 0
     if args.command == "init-branch":
         session = resolve_workspace_arg_path(args.session)
@@ -490,35 +541,31 @@ def init_session_dir(
     if discover:
         discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
         discovery_data["backtest"] = {"start": backtest_start}
-        discovery_data = attach_data_readiness(
+        discovery_data = refresh_data_readiness(
             session=session,
             discovery_data=discovery_data,
             backtest_start=backtest_start,
         )
     with SessionLock(session):
         write_tsv_header(session / "events.tsv", EVENTS_HEADER)
+        if not session_state_path(session).exists():
+            write_session_state(session, {})
         discovery_path = session / "discovery.json"
         if discovery_data is not None:
-            discovery_path.write_text(
-                json.dumps(discovery_data, indent=2),
-                encoding="utf-8",
-            )
+            write_discovery(session, discovery_data)
         elif not discovery_path.exists():
-            discovery_path.write_text(
-                json.dumps(
-                    {
-                        "ticker": ticker.upper(),
-                        "source": "pending",
-                        "parents": [],
-                        "blanket_new": [],
-                        "children": [],
-                        "K_discovery": 0,
-                        "backtest": {"start": backtest_start},
-                        "created_at": _now(),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            write_discovery(
+                session,
+                {
+                    "ticker": ticker.upper(),
+                    "source": "pending",
+                    "parents": [],
+                    "blanket_new": [],
+                    "children": [],
+                    "K_discovery": 0,
+                    "backtest": {"start": backtest_start},
+                    "created_at": _now(),
+                },
             )
         append_tsv_row(
             session / "events.tsv",
@@ -674,14 +721,23 @@ def build_discovery_payload_from_text(
     }
 
 
-def attach_data_readiness(
+def write_discovery(session: Path, discovery_data: dict) -> None:
+    (session / "discovery.json").write_text(
+        json.dumps(discovery_data, indent=2),
+        encoding="utf-8",
+    )
+
+
+def refresh_data_readiness(
     *,
     session: Path,
     discovery_data: dict,
     backtest_start: str,
 ) -> dict:
     """Attach edge-owned data readiness facts to a live discovery payload."""
-    discovery_path = session / "discovery.json"
+    fd, temp_name = tempfile.mkstemp(dir=session, suffix="-discovery.json")
+    os.close(fd)
+    discovery_path = Path(temp_name)
     discovery_path.write_text(json.dumps(discovery_data, indent=2), encoding="utf-8")
     try:
         report = run_edge_verify_data(
@@ -692,7 +748,8 @@ def attach_data_readiness(
     except RuntimeError:
         discovery_path.unlink(missing_ok=True)
         return discovery_data
-    discovery_path.unlink(missing_ok=True)
+    finally:
+        discovery_path.unlink(missing_ok=True)
     if report is None:
         return discovery_data
     enriched = dict(discovery_data)
@@ -874,7 +931,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
-    if warning:
+    if warning and should_emit_readiness_warning(session, discovery):
         print(
             f"Warning: {warning}",
             file=sys.stderr,
@@ -1423,7 +1480,7 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 
 ## Next Step
 
-{session_next_step(branches, discovery)}
+{session_next_step(session, branches, discovery)}
 """
 
 
@@ -1619,7 +1676,8 @@ def format_data_readiness_summary(discovery: dict) -> str:
     if not summary:
         return ""
     requested = report.get("requested_window") or {}
-    probe_limit = report.get("probe_limit")
+    probe = report.get("probe") or {}
+    probe_limit = probe.get("limit") or report.get("probe_limit")
     return (
         f"{summary.get('full_window_count', 0)} full-window, "
         f"{summary.get('partial_window_count', 0)} partial, "
@@ -1627,6 +1685,24 @@ def format_data_readiness_summary(discovery: dict) -> str:
         f"{summary.get('error_count', 0)} error "
         f"(start {requested.get('start', 'latest')}, probe {probe_limit or 'n/a'})"
     )
+
+
+def render_target_boundary_line(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    target_boundary = report.get("target_boundary") or {}
+    classification = target_boundary.get("classification")
+    if not classification:
+        return "not recorded"
+    observed_first = target_boundary.get("observed_first_timestamp") or target_boundary.get(
+        "observed_first"
+    )
+    observed_last = target_boundary.get("observed_last_timestamp")
+    parts = [str(classification)]
+    if observed_first:
+        parts.append(f"observed_first={observed_first}")
+    if observed_last:
+        parts.append(f"observed_last={observed_last}")
+    return ", ".join(parts)
 
 
 def render_discovery_readiness_section(discovery: dict) -> str:
@@ -1638,6 +1714,7 @@ def render_discovery_readiness_section(discovery: dict) -> str:
     usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
     lines = [
         f"- summary: `{format_data_readiness_summary(discovery)}`\n"
+        f"- target_boundary: `{render_target_boundary_line(discovery)}`\n"
         f"- usable_tickers: `{usable}`\n"
         f"- full_window_tickers: `{full_window}`"
     ]
@@ -1645,7 +1722,7 @@ def render_discovery_readiness_section(discovery: dict) -> str:
     if warning:
         lines.append(f"- warning: `{warning}`")
     for line in readiness_recommendation_lines(discovery):
-        lines.append(f"- recommended_start: `{line}`")
+        lines.append(f"- coverage_hint: `{line}`")
     return "\n".join(lines)
 
 
@@ -1654,27 +1731,53 @@ def build_readiness_warning(discovery: dict) -> str:
     summary = report.get("summary") or {}
     if not summary:
         return ""
-    if int(summary.get("full_window_count", 0) or 0) > 0:
-        return ""
     if int(summary.get("usable_count", 0) or 0) == 0:
         return "No usable tickers were confirmed for the requested backtest window."
     requested_start = (report.get("requested_window") or {}).get("start", "latest")
-    return (
-        "No full-window tickers cover the requested start "
-        f"{requested_start}. Adjust `backtest_start` before spending more research rounds."
+    target_boundary = report.get("target_boundary") or {}
+    classification = target_boundary.get("classification")
+    observed_first = target_boundary.get("observed_first_timestamp") or target_boundary.get(
+        "observed_first"
     )
+    if classification == "confirmed_after_requested_start":
+        return (
+            "Target history begins after the requested backtest_start "
+            f"{requested_start}. Update the session start before trusting long-horizon validation."
+        )
+    if classification == "unknown_probe_truncated":
+        observed_suffix = (
+            f" The deepest observed target history begins at {observed_first}."
+            if observed_first
+            else ""
+        )
+        return (
+            "Target coverage before the requested backtest_start "
+            f"{requested_start} is not yet confirmed.{observed_suffix}"
+        )
+    if int(summary.get("full_window_count", 0) or 0) <= 0:
+        return (
+            "Discovered drivers are only partially available from the requested start "
+            f"{requested_start}. Target-first research can still continue; use coverage hints only "
+            "if your branch depends on strict overlap."
+        )
+    return ""
 
 
 def readiness_recommendation_lines(discovery: dict) -> list[str]:
     report = discovery.get("data_readiness") or {}
+    coverage_hints = report.get("coverage_hints") or {}
     recommendations = report.get("recommended_starts") or {}
     lines: list[str] = []
-    target_start = recommendations.get("target_recommended_start")
-    common_start = recommendations.get("common_recommended_start")
+    target_start = coverage_hints.get("target_safe_start") or recommendations.get(
+        "target_recommended_start"
+    )
+    common_start = coverage_hints.get("dense_overlap_hint_start") or recommendations.get(
+        "common_recommended_start"
+    )
     if target_start:
-        lines.append(f"target={target_start}")
+        lines.append(f"target_safe={target_start}")
     if common_start:
-        lines.append(f"common={common_start}")
+        lines.append(f"dense_overlap={common_start}")
     return lines
 
 
@@ -1863,7 +1966,7 @@ def build_branch_snapshot_line(branch: dict) -> str:
     )
 
 
-def session_next_step(branches: list[dict], discovery: dict) -> str:
+def session_next_step(session: Path, branches: list[dict], discovery: dict) -> str:
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]
     has_historical_keep = any(
@@ -1895,9 +1998,11 @@ def session_next_step(branches: list[dict], discovery: dict) -> str:
         )
         if warning:
             suffix = (
-                f" Also revisit `backtest_start` first ({recommendations})."
+                " Also revisit `backtest_start` first with "
+                f"`abel-alpha set-backtest-start --session {session} --target-safe` ({recommendations})."
                 if recommendations
-                else " Also revisit `backtest_start` first."
+                else " Also revisit `backtest_start` first with "
+                f"`abel-alpha set-backtest-start --session {session} --date YYYY-MM-DD`."
             )
             return guidance + suffix
         return guidance
@@ -1967,6 +2072,149 @@ def load_discovery(session: Path) -> dict:
             "K_discovery": 0,
         }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def session_state_path(session: Path) -> Path:
+    return session / SESSION_STATE_FILENAME
+
+
+def load_session_state(session: Path) -> dict:
+    path = session_state_path(session)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_session_state(session: Path, payload: dict) -> None:
+    session_state_path(session).write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def readiness_warning_fingerprint(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return ""
+    target_boundary = report.get("target_boundary") or {}
+    coverage_hints = report.get("coverage_hints") or {}
+    payload = {
+        "requested_start": (report.get("requested_window") or {}).get("start"),
+        "usable_count": summary.get("usable_count"),
+        "full_window_count": summary.get("full_window_count"),
+        "classification": target_boundary.get("classification"),
+        "observed_first_timestamp": (
+            target_boundary.get("observed_first_timestamp")
+            or target_boundary.get("observed_first")
+        ),
+        "target_safe_start": coverage_hints.get("target_safe_start"),
+        "dense_overlap_hint_start": coverage_hints.get("dense_overlap_hint_start"),
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
+def should_emit_readiness_warning(session: Path, discovery: dict) -> bool:
+    warning = build_readiness_warning(discovery)
+    if not warning:
+        return False
+    fingerprint = readiness_warning_fingerprint(discovery)
+    if not fingerprint:
+        return True
+    state = load_session_state(session)
+    if state.get("last_readiness_warning_fingerprint") == fingerprint:
+        return False
+    state["last_readiness_warning_fingerprint"] = fingerprint
+    write_session_state(session, state)
+    return True
+
+
+def resolve_backtest_start_request(
+    *,
+    session: Path,
+    explicit_date: str | None,
+    use_target_safe: bool,
+    use_coverage_hint: bool,
+) -> tuple[str, str]:
+    if explicit_date:
+        return explicit_date, "explicit_date"
+    discovery = load_discovery(session)
+    report = discovery.get("data_readiness") or {}
+    coverage_hints = report.get("coverage_hints") or {}
+    recommended = report.get("recommended_starts") or {}
+    if use_target_safe:
+        target_safe = coverage_hints.get("target_safe_start") or recommended.get(
+            "target_recommended_start"
+        )
+        if not target_safe:
+            raise RuntimeError(
+                "No target-safe readiness hint is available for this session."
+            )
+        return str(target_safe), "target_safe_hint"
+    if use_coverage_hint:
+        coverage_hint = coverage_hints.get(
+            "dense_overlap_hint_start"
+        ) or recommended.get("common_recommended_start")
+        if not coverage_hint:
+            raise RuntimeError(
+                "No dense-overlap readiness hint is available for this session."
+            )
+        return str(coverage_hint), "coverage_hint"
+    raise RuntimeError("A backtest start selector is required.")
+
+
+def update_backtest_start(*, session: Path, backtest_start: str, source: str) -> dict:
+    discovery = load_discovery(session)
+    updated = dict(discovery)
+    updated["backtest"] = {"start": backtest_start}
+    updated = refresh_data_readiness(
+        session=session,
+        discovery_data=updated,
+        backtest_start=backtest_start,
+    )
+    with SessionLock(session):
+        write_discovery(session, updated)
+        state = load_session_state(session)
+        state.pop("last_readiness_warning_fingerprint", None)
+        write_session_state(session, state)
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "backtest_start_updated",
+                "branch_id": "",
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"Updated session backtest start to {backtest_start} via {source}"
+                ),
+                "artifact_path": "discovery.json",
+            },
+        )
+        if updated.get("data_readiness"):
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "data_readiness_recorded",
+                    "branch_id": "",
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": (
+                        "Refreshed driver data readiness: "
+                        f"{format_data_readiness_summary(updated)}"
+                    ),
+                    "artifact_path": "discovery.json",
+                },
+            )
+        render_session(session)
+    return updated
 
 
 def render_default_engine_template(discovery: dict, session: Path) -> str:
