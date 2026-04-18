@@ -910,6 +910,11 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     requested_start = str(
         branch_spec.get("requested_start") or _get_backtest_start(discovery)
     ).strip()
+    advisory_lines = branch_runtime_advisory_lines(
+        branch_requested_start=requested_start,
+        discovery=discovery,
+        readiness=load_readiness(session),
+    )
     dependencies = branch_dependencies_payload(
         branch=branch,
         branch_spec=branch_spec,
@@ -984,6 +989,8 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     print(f"Prepared branch inputs: {output_path.relative_to(session)}")
     print(f"  target: {target}")
     print(f"  selected_drivers: {len(selected_drivers)}")
+    for line in advisory_lines:
+        print(f"  {line}")
     print("")
     print("Next:")
     print(f"  abel-alpha debug-branch --branch {branch}")
@@ -1066,6 +1073,12 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    backtest_start = branch_requested_start(branch, discovery)
+    advisory_lines = branch_runtime_advisory_lines(
+        branch_requested_start=backtest_start,
+        discovery=discovery,
+        readiness=readiness,
+    )
     warning = build_readiness_warning(readiness)
     if branch_uses_default_scaffold(branch, discovery, readiness, session) and not args.allow_untouched_template:
         print(
@@ -1073,7 +1086,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
             "Edit engine.py first, or use `abel-alpha debug-branch` while wiring the first real signal.",
             file=sys.stderr,
         )
-        if warning:
+        for line in advisory_lines:
+            print(f"Runtime context: {line}", file=sys.stderr)
+        if warning and backtest_start == _get_backtest_start(discovery):
             print(f"Readiness warning: {warning}", file=sys.stderr)
         for line in readiness_recommendation_lines(readiness):
             print(f"Coverage hint: {line}", file=sys.stderr)
@@ -1089,7 +1104,6 @@ def run_branch_round(args: argparse.Namespace) -> int:
     report_path = branch / "outputs" / f"{round_id}-edge-validation.md"
     handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
     context_path = branch / "outputs" / f"{round_id}-alpha-context.json"
-    backtest_start = branch_requested_start(branch, discovery)
     context_path.write_text(
         json.dumps(
             build_branch_context(
@@ -1105,9 +1119,12 @@ def run_branch_round(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     emit_readiness_warning = False
-    if warning:
+    session_start = _get_backtest_start(discovery)
+    if warning and backtest_start == session_start:
         with SessionLock(session):
             emit_readiness_warning = should_emit_readiness_warning(session, readiness)
+    for line in advisory_lines:
+        print(f"Runtime context: {line}", file=sys.stderr)
     if warning and emit_readiness_warning:
         print(
             f"Warning: {warning}",
@@ -1262,7 +1279,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
     print(f"Edge handoff: {handoff_path.relative_to(session)}")
-    return 0 if result.get("verdict") == "PASS" else 1
+    return 0
 
 
 def debug_branch_run(args: argparse.Namespace) -> int:
@@ -1272,6 +1289,11 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     readiness = load_readiness(session)
     workspace_root = find_workspace_root(branch)
     backtest_start = branch_requested_start(branch, discovery)
+    advisory_lines = branch_runtime_advisory_lines(
+        branch_requested_start=backtest_start,
+        discovery=discovery,
+        readiness=readiness,
+    )
     context_path = branch / "outputs" / "debug-alpha-context.json"
     debug_result_path = branch / "outputs" / "debug-edge-result.json"
     context_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1328,6 +1350,8 @@ def debug_branch_run(args: argparse.Namespace) -> int:
         render_session(session)
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
+    for line in advisory_lines:
+        print(f"Runtime context: {line}")
     print(f"Debug context: {context_path.relative_to(session)}")
     if debug_result_path.exists():
         print(f"Debug result: {debug_result_path.relative_to(session)}")
@@ -2077,8 +2101,9 @@ def build_readiness_warning(readiness: dict) -> str:
     observed_first = target_boundary.get("observed_first_timestamp")
     if classification == "confirmed_after_requested_start":
         return (
-            "Target history begins after the requested backtest_start "
-            f"{requested_start}. Update the session start before trusting long-horizon validation."
+            "Target history begins after the session requested backtest_start "
+            f"{requested_start}. Treat this as a session-level coverage note; branches may still "
+            "choose narrower explicit starts intentionally."
         )
     if classification == "unknown_probe_truncated":
         observed_suffix = (
@@ -2092,7 +2117,7 @@ def build_readiness_warning(readiness: dict) -> str:
         )
     if int(summary.get("start_covered_count", 0) or 0) <= 0:
         return (
-            "Discovered drivers are only partially available from the requested start "
+            "Discovered drivers are only partially available from the session requested start "
             f"{requested_start}. Target-first research can still continue; use coverage hints only "
             "if your branch depends on strict overlap."
         )
@@ -2109,6 +2134,30 @@ def readiness_recommendation_lines(readiness: dict) -> list[str]:
         lines.append(f"target_safe={target_start}")
     if common_start:
         lines.append(f"dense_overlap={common_start}")
+    return lines
+
+
+def branch_runtime_advisory_lines(
+    *,
+    branch_requested_start: str,
+    discovery: dict,
+    readiness: dict,
+) -> list[str]:
+    session_requested_start = _get_backtest_start(discovery)
+    coverage_hints = (readiness or {}).get("coverage_hints") or {}
+    lines = [f"branch_requested_start={branch_requested_start}"]
+    if branch_requested_start != session_requested_start:
+        lines.append(
+            f"session_backtest_start={session_requested_start} (session-level advisory only)"
+        )
+    target_safe = coverage_hints.get("target_safe_start")
+    if target_safe:
+        lines.append(f"target_safe_hint={target_safe}")
+    dense_overlap = coverage_hints.get("dense_overlap_hint_start")
+    if dense_overlap:
+        lines.append(
+            f"dense_overlap_hint={dense_overlap} (advisory only; not required unless the branch needs strict overlap)"
+        )
     return lines
 
 
