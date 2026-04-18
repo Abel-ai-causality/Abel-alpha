@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
+from abel_alpha.workspace import load_workspace_manifest, resolve_workspace_paths
 
 def run_python_json(
     python_path: Path | str,
@@ -131,6 +132,9 @@ def build_workspace_runtime_env(
     workspace_env = (workspace_root / ".env").resolve()
     if not env.get("ABEL_AUTH_ENV_FILE") and workspace_env.exists():
         env["ABEL_AUTH_ENV_FILE"] = str(workspace_env)
+    manifest = load_workspace_manifest(workspace_root)
+    cache_root = resolve_workspace_paths(workspace_root, manifest)["cache_root"].resolve()
+    env.setdefault("CAUSAL_EDGE_CACHE_ROOT", str(cache_root))
     return env
 
 

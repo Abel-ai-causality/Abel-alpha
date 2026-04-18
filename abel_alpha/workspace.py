@@ -48,7 +48,7 @@ def resolve_workspace_paths(root: Path, manifest: dict | None = None) -> dict[st
     return {
         "research_root": root / str(paths.get("research_root", "research")),
         "docs_root": root / str(paths.get("docs_root", "docs")),
-        "cache_root": root / str(paths.get("cache_root", "cache")),
+        "cache_root": root / str(paths.get("cache_root", "cache/market_data")),
         "logs_root": root / str(paths.get("logs_root", "logs")),
         "venv": root / str(paths.get("venv", ".venv")),
     }
@@ -112,7 +112,7 @@ def build_default_manifest(name: str) -> dict:
         "paths": {
             "research_root": "research",
             "docs_root": "docs",
-            "cache_root": "cache",
+            "cache_root": "cache/market_data",
             "logs_root": "logs",
             "venv": ".venv",
         },
