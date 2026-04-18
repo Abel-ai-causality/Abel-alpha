@@ -47,6 +47,7 @@ EVENTS_HEADER = [
 DEFAULT_BACKTEST_START = "2020-01-01"
 SESSION_STATE_FILENAME = "session_state.json"
 BRANCH_STATE_FILENAME = "branch_state.json"
+READINESS_FILENAME = "readiness.json"
 
 RESULTS_HEADER = [
     "exp_id",
@@ -332,21 +333,24 @@ def main() -> int:
             backtest_start=args.backtest_start,
         )
         discovery = load_discovery(session)
+        readiness = load_readiness(session)
         print(f"Created Abel-alpha session at {session}")
         print(f"  ticker: {discovery.get('ticker', args.ticker.upper())}")
         print(f"  discovery: {session / 'discovery.json'}")
         print(f"  events: {session / 'events.tsv'}")
+        if readiness:
+            print(f"  readiness: {session / READINESS_FILENAME}")
         if args.discover:
             print(
                 f"  discovery_source: {discovery.get('source', 'unknown')} "
                 f"(K={discovery.get('K_discovery', 0)})"
             )
-            readiness_summary = format_data_readiness_summary(discovery)
+            readiness_summary = format_data_readiness_summary(readiness)
             if readiness_summary:
                 print(f"  data_readiness: {readiness_summary}")
-            for line in readiness_recommendation_lines(discovery):
+            for line in readiness_recommendation_lines(readiness):
                 print(f"  {line}")
-            warning = build_readiness_warning(discovery)
+            warning = build_readiness_warning(readiness)
             if warning:
                 print(f"  warning: {warning}")
         else:
@@ -363,7 +367,7 @@ def main() -> int:
             use_target_safe=args.target_safe,
             use_coverage_hint=args.coverage_hint,
         )
-        discovery = update_backtest_start(
+        discovery, readiness = update_backtest_start(
             session=session,
             backtest_start=backtest_start,
             source=source,
@@ -371,12 +375,12 @@ def main() -> int:
         print(f"Updated Abel-alpha session at {session}")
         print(f"  backtest_start: {backtest_start}")
         print(f"  source: {source}")
-        readiness_summary = format_data_readiness_summary(discovery)
+        readiness_summary = format_data_readiness_summary(readiness)
         if readiness_summary:
             print(f"  data_readiness: {readiness_summary}")
-        for line in readiness_recommendation_lines(discovery):
+        for line in readiness_recommendation_lines(readiness):
             print(f"  {line}")
-        warning = build_readiness_warning(discovery)
+        warning = build_readiness_warning(readiness)
         if warning:
             print(f"  warning: {warning}")
         print("")
@@ -419,17 +423,18 @@ def main() -> int:
     if args.command == "init-branch":
         session = resolve_workspace_arg_path(args.session)
         discovery = load_discovery(session)
+        readiness = load_readiness(session)
         branch = init_branch_dir(session, args.branch_id)
         print(f"Created Abel-alpha branch at {branch}")
         print(f"  engine: {branch / 'engine.py'}")
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
         print("")
-        warning = build_readiness_warning(discovery)
+        warning = build_readiness_warning(readiness)
         if warning:
             print("Readiness:")
             print(f"  warning: {warning}")
-            for line in readiness_recommendation_lines(discovery):
+            for line in readiness_recommendation_lines(readiness):
                 print(f"  coverage_hint: {line}")
             print("")
         print("Reminders:")
@@ -580,10 +585,11 @@ def init_session_dir(
     session = root / ticker.lower() / exp_id
     session.mkdir(parents=True, exist_ok=True)
     discovery_data = None
+    readiness_report = None
     if discover:
         discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
         discovery_data["backtest"] = {"start": backtest_start}
-        discovery_data = refresh_data_readiness(
+        readiness_report = refresh_data_readiness(
             session=session,
             discovery_data=discovery_data,
             backtest_start=backtest_start,
@@ -609,6 +615,8 @@ def init_session_dir(
                     "created_at": _now(),
                 },
             )
+        if readiness_report is not None:
+            write_readiness(session, readiness_report)
         append_tsv_row(
             session / "events.tsv",
             EVENTS_HEADER,
@@ -642,7 +650,7 @@ def init_session_dir(
                     "artifact_path": str(discovery_path.relative_to(session)),
                 },
             )
-            if discovery_data.get("data_readiness"):
+            if readiness_report:
                 append_tsv_row(
                     session / "events.tsv",
                     EVENTS_HEADER,
@@ -656,9 +664,9 @@ def init_session_dir(
                         "decision": "",
                         "description": (
                             "Recorded driver data readiness: "
-                            f"{format_data_readiness_summary(discovery_data)}"
+                            f"{format_data_readiness_summary(readiness_report)}"
                         ),
-                        "artifact_path": str(discovery_path.relative_to(session)),
+                        "artifact_path": READINESS_FILENAME,
                     },
                 )
         render_session(session)
@@ -707,13 +715,20 @@ def write_discovery(session: Path, discovery_data: dict) -> None:
     )
 
 
+def write_readiness(session: Path, readiness_report: dict) -> None:
+    (session / READINESS_FILENAME).write_text(
+        json.dumps(readiness_report, indent=2),
+        encoding="utf-8",
+    )
+
+
 def refresh_data_readiness(
     *,
     session: Path,
     discovery_data: dict,
     backtest_start: str,
-) -> dict:
-    """Attach edge-owned data readiness facts to a live discovery payload."""
+) -> dict | None:
+    """Compute the edge-owned data readiness report for a live discovery payload."""
     fd, temp_name = tempfile.mkstemp(dir=session, suffix="-discovery.json")
     os.close(fd)
     discovery_path = Path(temp_name)
@@ -726,24 +741,10 @@ def refresh_data_readiness(
         )
     except RuntimeError:
         discovery_path.unlink(missing_ok=True)
-        return discovery_data
+        return None
     finally:
         discovery_path.unlink(missing_ok=True)
-    if report is None:
-        return discovery_data
-    enriched = dict(discovery_data)
-    enriched["data_readiness"] = report
-    enriched["usable_tickers"] = [
-        item.get("ticker")
-        for item in report.get("results", [])
-        if item.get("usable")
-    ]
-    enriched["start_covered_tickers"] = [
-        item.get("ticker")
-        for item in report.get("results", [])
-        if item.get("covers_requested_start")
-    ]
-    return enriched
+    return report
 
 
 def run_edge_verify_data(
@@ -801,6 +802,7 @@ def run_edge_verify_data(
 def init_branch_dir(session: Path, branch_id: str) -> Path:
     with SessionLock(session):
         discovery = load_discovery(session)
+        readiness = load_readiness(session)
         branch = session / "branches" / branch_id
         branch.mkdir(parents=True, exist_ok=True)
         (branch / "rounds").mkdir(parents=True, exist_ok=True)
@@ -811,7 +813,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         engine = branch / "engine.py"
         if not engine.exists():
             engine.write_text(
-                render_default_engine_template(discovery, session),
+                render_default_engine_template(discovery, readiness, session),
                 encoding="utf-8",
             )
         append_tsv_row(
@@ -838,8 +840,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
     session = branch.parent.parent
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
-    warning = build_readiness_warning(discovery)
-    if branch_uses_default_scaffold(branch, discovery, session) and not args.allow_untouched_template:
+    readiness = load_readiness(session)
+    warning = build_readiness_warning(readiness)
+    if branch_uses_default_scaffold(branch, discovery, readiness, session) and not args.allow_untouched_template:
         print(
             "Refusing to record a round from the untouched default engine scaffold. "
             "Edit engine.py first, or use `abel-alpha debug-branch` while wiring the first real signal.",
@@ -847,7 +850,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
         )
         if warning:
             print(f"Readiness warning: {warning}", file=sys.stderr)
-        for line in readiness_recommendation_lines(discovery):
+        for line in readiness_recommendation_lines(readiness):
             print(f"Coverage hint: {line}", file=sys.stderr)
         return 2
     rows = read_tsv_rows(branch / "results.tsv")
@@ -868,6 +871,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
                 branch=branch,
                 session=session,
                 discovery=discovery,
+                readiness=readiness,
                 round_id=round_id,
                 backtest_start=backtest_start,
             ),
@@ -878,13 +882,13 @@ def run_branch_round(args: argparse.Namespace) -> int:
     emit_readiness_warning = False
     if warning:
         with SessionLock(session):
-            emit_readiness_warning = should_emit_readiness_warning(session, discovery)
+            emit_readiness_warning = should_emit_readiness_warning(session, readiness)
     if warning and emit_readiness_warning:
         print(
             f"Warning: {warning}",
             file=sys.stderr,
         )
-        for line in readiness_recommendation_lines(discovery):
+        for line in readiness_recommendation_lines(readiness):
             print(f"Coverage hint: {line}", file=sys.stderr)
 
     python_bin = args.python_bin or resolve_default_python_bin(branch)
@@ -1040,6 +1044,7 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     branch = resolve_workspace_arg_path(args.branch).resolve()
     session = branch.parent.parent
     discovery = load_discovery(session)
+    readiness = load_readiness(session)
     workspace_root = find_workspace_root(branch)
     backtest_start = _get_backtest_start(discovery)
     context_path = branch / "outputs" / "debug-alpha-context.json"
@@ -1051,6 +1056,7 @@ def debug_branch_run(args: argparse.Namespace) -> int:
                 branch=branch,
                 session=session,
                 discovery=discovery,
+                readiness=readiness,
                 round_id="debug",
                 backtest_start=backtest_start,
             ),
@@ -1096,14 +1102,15 @@ def debug_branch_run(args: argparse.Namespace) -> int:
 
 def render_session(session: Path) -> None:
     discovery = load_discovery(session)
+    readiness = load_readiness(session)
     branches = load_branches(session)
     for branch in branches:
-        render_branch(branch, discovery, session.name)
-    session_readme = build_session_readme(session, discovery, branches)
+        render_branch(branch, discovery, readiness, session.name)
+    session_readme = build_session_readme(session, discovery, readiness, branches)
     (session / "README.md").write_text(session_readme, encoding="utf-8")
 
 
-def render_branch(branch: dict, discovery: dict, exp_id: str) -> None:
+def render_branch(branch: dict, discovery: dict, readiness: dict, exp_id: str) -> None:
     branch_dir = branch["branch_dir"]
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
@@ -1118,25 +1125,26 @@ def render_branch(branch: dict, discovery: dict, exp_id: str) -> None:
         build_memory(branch, discovery), encoding="utf-8"
     )
     (branch_dir / "thesis.md").write_text(
-        build_thesis(branch, discovery), encoding="utf-8"
+        build_thesis(branch, discovery, readiness), encoding="utf-8"
     )
 
 
 def print_status(session: Path) -> None:
     discovery = load_discovery(session)
+    readiness = load_readiness(session)
     branches = load_branches(session)
     print(
         f"Session: {session.name} ({discovery.get('ticker', session.parent.name.upper())})"
     )
     print(f"Branches: {len(branches)}")
     print(f"Total rounds: {sum(len(branch['rows']) for branch in branches)}")
-    readiness_summary = format_data_readiness_summary(discovery)
+    readiness_summary = format_data_readiness_summary(readiness)
     if readiness_summary:
         print(f"Discovery readiness: {readiness_summary}")
-        warning = build_readiness_warning(discovery)
+        warning = build_readiness_warning(readiness)
         if warning:
             print(f"Readiness warning: {warning}")
-        for line in readiness_recommendation_lines(discovery):
+        for line in readiness_recommendation_lines(readiness):
             print(f"Coverage hint: {line}")
     leader = select_leader(branches)
     if leader and leader["rows"]:
@@ -1330,7 +1338,12 @@ def has_explicit_hypothesis(value: str) -> bool:
     )
 
 
-def build_session_readme(session: Path, discovery: dict, branches: list[dict]) -> str:
+def build_session_readme(
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+    branches: list[dict],
+) -> str:
     keep_branches = [
         branch
         for branch in branches
@@ -1409,7 +1422,7 @@ Explore {discovery.get("ticker", session.parent.name.upper())} in session `{sess
 
 ## Discovery Readiness
 
-{render_discovery_readiness_section(discovery)}
+{render_discovery_readiness_section(discovery, readiness)}
 
 ## Selection Narrative
 
@@ -1431,7 +1444,7 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 
 ## Next Step
 
-{session_next_step(session, branches, discovery)}
+{session_next_step(session, branches, discovery, readiness)}
 """
 
 
@@ -1552,7 +1565,7 @@ generated by Abel-alpha narrative layer
 """
 
 
-def build_thesis(branch: dict, discovery: dict) -> str:
+def build_thesis(branch: dict, discovery: dict, readiness: dict) -> str:
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
     hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
@@ -1563,8 +1576,8 @@ def build_thesis(branch: dict, discovery: dict) -> str:
     )
     parents = format_discovery_nodes(discovery.get("parents", []), limit=5)
     blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
-    usable = format_simple_nodes(discovery.get("usable_tickers", []), limit=8)
-    start_covered = format_simple_nodes(discovery.get("start_covered_tickers", []), limit=8)
+    usable = format_simple_nodes(readiness_usable_tickers(readiness), limit=8)
+    start_covered = format_simple_nodes(readiness_start_covered_tickers(readiness), limit=8)
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -1622,8 +1635,29 @@ def format_simple_nodes(items: list[object], *, limit: int = 8) -> str:
     return ", ".join(rendered) or "none recorded"
 
 
-def format_data_readiness_summary(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def readiness_results(readiness: dict) -> list[dict]:
+    results = readiness.get("results") or []
+    return [item for item in results if isinstance(item, dict)]
+
+
+def readiness_usable_tickers(readiness: dict) -> list[str]:
+    return [
+        str(item.get("ticker") or "").strip().upper()
+        for item in readiness_results(readiness)
+        if item.get("usable")
+    ]
+
+
+def readiness_start_covered_tickers(readiness: dict) -> list[str]:
+    return [
+        str(item.get("ticker") or "").strip().upper()
+        for item in readiness_results(readiness)
+        if item.get("covers_requested_start")
+    ]
+
+
+def format_data_readiness_summary(readiness: dict) -> str:
+    report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
         return ""
@@ -1639,8 +1673,8 @@ def format_data_readiness_summary(discovery: dict) -> str:
     )
 
 
-def render_target_boundary_line(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def render_target_boundary_line(readiness: dict) -> str:
+    report = readiness or {}
     target_boundary = report.get("target_boundary") or {}
     classification = target_boundary.get("classification")
     if not classification:
@@ -1655,8 +1689,8 @@ def render_target_boundary_line(discovery: dict) -> str:
     return ", ".join(parts)
 
 
-def render_readiness_guidance(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def render_readiness_guidance(discovery: dict, readiness: dict) -> str:
+    report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
         return ""
@@ -1685,32 +1719,32 @@ def render_readiness_guidance(discovery: dict) -> str:
     )
 
 
-def render_discovery_readiness_section(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def render_discovery_readiness_section(discovery: dict, readiness: dict) -> str:
+    report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
         return "`No data readiness report recorded yet. Run live discovery again after edge verification is available.`"
-    start_covered = ", ".join(discovery.get("start_covered_tickers") or []) or "none"
-    usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
+    start_covered = ", ".join(readiness_start_covered_tickers(readiness)) or "none"
+    usable = ", ".join(readiness_usable_tickers(readiness)) or "none"
     lines = [
-        f"- summary: `{format_data_readiness_summary(discovery)}`\n"
-        f"- target_boundary: `{render_target_boundary_line(discovery)}`\n"
+        f"- summary: `{format_data_readiness_summary(readiness)}`\n"
+        f"- target_boundary: `{render_target_boundary_line(readiness)}`\n"
         f"- usable_tickers: `{usable}`\n"
         f"- start_covered_tickers: `{start_covered}`"
     ]
-    warning = build_readiness_warning(discovery)
+    warning = build_readiness_warning(readiness)
     if warning:
         lines.append(f"- warning: `{warning}`")
-    for line in readiness_recommendation_lines(discovery):
+    for line in readiness_recommendation_lines(readiness):
         lines.append(f"- coverage_hint: `{line}`")
-    guidance = render_readiness_guidance(discovery)
+    guidance = render_readiness_guidance(discovery, readiness)
     if guidance:
         lines.append(f"- interpretation: `{guidance}`")
     return "\n".join(lines)
 
 
-def build_readiness_warning(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def build_readiness_warning(readiness: dict) -> str:
+    report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
         return ""
@@ -1744,8 +1778,8 @@ def build_readiness_warning(discovery: dict) -> str:
     return ""
 
 
-def readiness_recommendation_lines(discovery: dict) -> list[str]:
-    report = discovery.get("data_readiness") or {}
+def readiness_recommendation_lines(readiness: dict) -> list[str]:
+    report = readiness or {}
     coverage_hints = report.get("coverage_hints") or {}
     lines: list[str] = []
     target_start = coverage_hints.get("target_safe_start")
@@ -1879,6 +1913,7 @@ def build_branch_context(
     branch: Path,
     session: Path,
     discovery: dict,
+    readiness: dict,
     round_id: str,
     backtest_start: str,
 ) -> dict:
@@ -1894,9 +1929,11 @@ def build_branch_context(
         "branch_dir": str(branch.resolve()),
         "outputs_dir": str((branch / "outputs").resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
+        "readiness_path": str((session / READINESS_FILENAME).resolve()),
         "ticker": discovery.get("ticker", session.parent.name.upper()),
         "backtest_start": backtest_start,
         "discovery": discovery,
+        "readiness": readiness,
     }
 
 
@@ -1942,7 +1979,12 @@ def build_branch_snapshot_line(branch: dict) -> str:
     )
 
 
-def session_next_step(session: Path, branches: list[dict], discovery: dict) -> str:
+def session_next_step(
+    session: Path,
+    branches: list[dict],
+    discovery: dict,
+    readiness: dict,
+) -> str:
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]
     has_historical_keep = any(
@@ -1966,8 +2008,8 @@ def session_next_step(session: Path, branches: list[dict], discovery: dict) -> s
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
     if pending:
         branch = pending[-1]
-        warning = build_readiness_warning(discovery)
-        recommendations = ", ".join(readiness_recommendation_lines(discovery))
+        warning = build_readiness_warning(readiness)
+        recommendations = ", ".join(readiness_recommendation_lines(readiness))
         guidance = (
             f"Edit `{branch['branch_id']}` and use `abel-alpha debug-branch --branch {branch['branch_dir']}` "
             "to wire the first real signal before recording a round."
@@ -2050,6 +2092,13 @@ def load_discovery(session: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_readiness(session: Path) -> dict:
+    path = session / READINESS_FILENAME
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def branch_state_path(branch: Path) -> Path:
     return branch / BRANCH_STATE_FILENAME
 
@@ -2086,8 +2135,8 @@ def write_session_state(session: Path, payload: dict) -> None:
     )
 
 
-def readiness_warning_fingerprint(discovery: dict) -> str:
-    report = discovery.get("data_readiness") or {}
+def readiness_warning_fingerprint(readiness: dict) -> str:
+    report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
         return ""
@@ -2105,11 +2154,11 @@ def readiness_warning_fingerprint(discovery: dict) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
-def should_emit_readiness_warning(session: Path, discovery: dict) -> bool:
-    warning = build_readiness_warning(discovery)
+def should_emit_readiness_warning(session: Path, readiness: dict) -> bool:
+    warning = build_readiness_warning(readiness)
     if not warning:
         return False
-    fingerprint = readiness_warning_fingerprint(discovery)
+    fingerprint = readiness_warning_fingerprint(readiness)
     if not fingerprint:
         return True
     state = load_session_state(session)
@@ -2129,8 +2178,7 @@ def resolve_backtest_start_request(
 ) -> tuple[str, str]:
     if explicit_date:
         return explicit_date, "explicit_date"
-    discovery = load_discovery(session)
-    report = discovery.get("data_readiness") or {}
+    report = load_readiness(session)
     coverage_hints = report.get("coverage_hints") or {}
     if use_target_safe:
         target_safe = coverage_hints.get("target_safe_start")
@@ -2149,17 +2197,27 @@ def resolve_backtest_start_request(
     raise RuntimeError("A backtest start selector is required.")
 
 
-def update_backtest_start(*, session: Path, backtest_start: str, source: str) -> dict:
+def update_backtest_start(
+    *,
+    session: Path,
+    backtest_start: str,
+    source: str,
+) -> tuple[dict, dict]:
     discovery = load_discovery(session)
-    updated = dict(discovery)
-    updated["backtest"] = {"start": backtest_start}
-    updated = refresh_data_readiness(
+    updated_discovery = dict(discovery)
+    updated_discovery["backtest"] = {"start": backtest_start}
+    readiness = refresh_data_readiness(
         session=session,
-        discovery_data=updated,
+        discovery_data=updated_discovery,
         backtest_start=backtest_start,
     )
     with SessionLock(session):
-        write_discovery(session, updated)
+        write_discovery(session, updated_discovery)
+        readiness_path = session / READINESS_FILENAME
+        if readiness:
+            write_readiness(session, readiness)
+        else:
+            readiness_path.unlink(missing_ok=True)
         state = load_session_state(session)
         state.pop("last_readiness_warning_fingerprint", None)
         write_session_state(session, state)
@@ -2180,7 +2238,7 @@ def update_backtest_start(*, session: Path, backtest_start: str, source: str) ->
                 "artifact_path": "discovery.json",
             },
         )
-        if updated.get("data_readiness"):
+        if readiness:
             append_tsv_row(
                 session / "events.tsv",
                 EVENTS_HEADER,
@@ -2194,13 +2252,13 @@ def update_backtest_start(*, session: Path, backtest_start: str, source: str) ->
                     "decision": "",
                     "description": (
                         "Refreshed driver data readiness: "
-                        f"{format_data_readiness_summary(updated)}"
+                        f"{format_data_readiness_summary(readiness)}"
                     ),
-                    "artifact_path": "discovery.json",
+                    "artifact_path": READINESS_FILENAME,
                 },
             )
         render_session(session)
-    return updated
+    return updated_discovery, readiness or {}
 
 
 def current_branch_hypothesis(branch_dir: Path, rows: list[dict[str, str]] | None = None) -> str:
@@ -2247,19 +2305,27 @@ def resolve_branch_hypothesis(
     return "", "missing"
 
 
-def render_default_engine_template(discovery: dict, session: Path) -> str:
+def render_default_engine_template(discovery: dict, readiness: dict, session: Path) -> str:
     return ENGINE_TEMPLATE.format(
         ticker=discovery.get("ticker", session.parent.name.upper()),
-        readiness_warning=build_readiness_warning(discovery) or "none",
-        coverage_hints_text=", ".join(readiness_recommendation_lines(discovery)) or "none",
+        readiness_warning=build_readiness_warning(readiness) or "none",
+        coverage_hints_text=", ".join(readiness_recommendation_lines(readiness)) or "none",
     )
 
 
-def branch_uses_default_scaffold(branch: Path, discovery: dict, session: Path) -> bool:
+def branch_uses_default_scaffold(
+    branch: Path,
+    discovery: dict,
+    readiness: dict,
+    session: Path,
+) -> bool:
     engine = branch / "engine.py"
     if not engine.exists():
         return False
-    return engine.read_text(encoding="utf-8") == render_default_engine_template(discovery, session)
+    return (
+        engine.read_text(encoding="utf-8")
+        == render_default_engine_template(discovery, readiness, session)
+    )
 
 def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
     if not round_id:
