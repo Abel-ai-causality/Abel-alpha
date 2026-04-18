@@ -2,7 +2,8 @@
 
 These are patterns that worked on specific assets at specific times.
 They are evidence of what's possible, not instructions for what to do.
-Read them for inspiration during EXPLORE mode.
+Read them for inspiration during EXPLORE mode, ideally after the branch already
+has a runnable `branch.yaml -> prepare-branch -> debug-branch` path.
 Do NOT copy-paste — understand the MECHANISM and decide if it applies.
 
 ---
