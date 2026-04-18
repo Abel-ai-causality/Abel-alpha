@@ -86,9 +86,8 @@ For first-pass strategy experiments, two common pitfalls are worth avoiding:
 
 ## Interface Policy
 
-Use the packaged `abel-alpha` CLI as the primary interface. The legacy
-`python scripts/research_narrative.py ...` entrypoint is historical and should
-not appear in new workflows, docs, or agents.
+Use the packaged `abel-alpha` CLI as the only supported interface for research
+workflows. New docs, scripts, and agents should call `abel-alpha ...` directly.
 
 ```mermaid
 flowchart TD

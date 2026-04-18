@@ -102,9 +102,8 @@ bars, and avoid blanket `dropna()` on a joined frame before confirming the
 target ticker still remains present.
 Your job: write the strategy implementation.
 
-Use the packaged CLI as the primary interface. The old
-`python scripts/research_narrative.py ...` path is historical and should not be
-the default guidance for new users or agents.
+Use the packaged CLI as the only supported interface. New users and agents
+should call `abel-alpha ...` directly.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 
