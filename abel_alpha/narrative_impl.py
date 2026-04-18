@@ -76,17 +76,17 @@ If provided, self.context contains workspace/session/branch/discovery metadata f
 Prefer StrategyEngine research helpers over hard-coded discovery parsing:
   - self.research_target_ticker()
   - self.research_requested_start()
-  - self.research_driver_tickers(require_usable=True, require_full_window=True)
+  - self.research_driver_tickers(require_usable=True, require_full_window=False)
   - self.research_driver_candidates(...)
   - self.load_research_bars(...)
   - self.research_close_frame(...)
-  - self.research_target_driver_frame(overlap="intersection")
+  - self.research_target_driver_frame(overlap="target_only")
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
 do not hide setup failures behind synthetic flat outputs.
 Current readiness warning: {readiness_warning}
-Recommended starts: {recommended_starts}
+Coverage hints: {recommended_starts}
 """
  
 from __future__ import annotations
@@ -100,37 +100,39 @@ class BranchEngine(StrategyEngine):
         start = self.research_requested_start() or "2020-01-01"
         ready_drivers = self.research_driver_tickers(
             require_usable=True,
-            require_full_window=True,
+            require_full_window=False,
         )
         # Example paved-road research flow:
         # bars = self.load_research_bars(
         #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=True,
+        #     require_full_window=False,
         #     limit=600,
         # )
         # close_frame = self.research_close_frame(
         #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=True,
+        #     require_full_window=False,
         #     limit=600,
         # )
         # target_close, driver_frame = self.research_target_driver_frame(
         #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=True,
-        #     overlap="intersection",
+        #     require_full_window=False,
+        #     overlap="target_only",
         #     require_drivers=True,
         #     limit=600,
         # )
+        # Start target-first, then tighten overlap only if the branch thesis truly needs it.
         # Build signals from those aligned bars, then return self.finalize_signals(...)
         readiness = self.research_data_readiness()
+        coverage_hints = readiness.get("coverage_hints") or {{}}
         recommendations = readiness.get("recommended_starts") or {{}}
-        target_start = recommendations.get("target_recommended_start")
-        common_start = recommendations.get("common_recommended_start")
+        target_start = coverage_hints.get("target_safe_start") or recommendations.get("target_recommended_start")
+        common_start = coverage_hints.get("dense_overlap_hint_start") or recommendations.get("common_recommended_start")
         raise NotImplementedError(
             "This branch is still using the default Abel-alpha scaffold. "
             "Replace the stub in engine.py before recording a real round. "
             f"requested_start={{start}}; target={{target}}; ready_drivers={{len(ready_drivers)}}; "
-            f"recommended_target_start={{target_start or 'n/a'}}; "
-            f"recommended_common_start={{common_start or 'n/a'}}. "
+            f"target_safe_start={{target_start or 'n/a'}}; "
+            f"dense_overlap_hint={{common_start or 'n/a'}}. "
             "Use `abel-alpha debug-branch` while wiring data helpers if you want a quick dry run."
         )
 
@@ -388,7 +390,7 @@ def main() -> int:
             print("Readiness:")
             print(f"  warning: {warning}")
             for line in readiness_recommendation_lines(discovery):
-                print(f"  recommended_start: {line}")
+                print(f"  coverage_hint: {line}")
             print("")
         print("Reminders:")
         print("  If you fetch bars, pass an explicit `limit=...`.")
@@ -909,7 +911,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
         if warning:
             print(f"Readiness warning: {warning}", file=sys.stderr)
         for line in readiness_recommendation_lines(discovery):
-            print(f"Recommended start: {line}", file=sys.stderr)
+            print(f"Coverage hint: {line}", file=sys.stderr)
         return 2
     rows = read_tsv_rows(branch / "results.tsv")
     round_id = f"round-{len(rows) + 1:03d}"
@@ -1187,7 +1189,7 @@ def print_status(session: Path) -> None:
         if warning:
             print(f"Readiness warning: {warning}")
         for line in readiness_recommendation_lines(discovery):
-            print(f"Recommended start: {line}")
+            print(f"Coverage hint: {line}")
     leader = select_leader(branches)
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
@@ -1705,6 +1707,41 @@ def render_target_boundary_line(discovery: dict) -> str:
     return ", ".join(parts)
 
 
+def render_readiness_guidance(discovery: dict) -> str:
+    report = discovery.get("data_readiness") or {}
+    summary = report.get("summary") or {}
+    if not summary:
+        return ""
+    requested_start = _get_backtest_start(discovery)
+    coverage_hints = report.get("coverage_hints") or {}
+    recommendations = report.get("recommended_starts") or {}
+    target_safe = coverage_hints.get("target_safe_start") or recommendations.get(
+        "target_recommended_start"
+    )
+    dense_overlap = coverage_hints.get("dense_overlap_hint_start") or recommendations.get(
+        "common_recommended_start"
+    )
+    if target_safe and dense_overlap and target_safe != dense_overlap:
+        return (
+            f"Desired start remains {requested_start}. Target-first research can begin around "
+            f"{target_safe}, while denser driver overlap appears around {dense_overlap} if the branch needs it."
+        )
+    if target_safe and target_safe != requested_start:
+        return (
+            f"Desired start remains {requested_start}. Target-safe coverage is currently observed from "
+            f"{target_safe}; later driver overlap is optional, not mandatory."
+        )
+    if dense_overlap:
+        return (
+            f"Desired start remains {requested_start}. Dense overlap is hinted around {dense_overlap}, "
+            "but target-first branches may continue earlier if they tolerate partial driver coverage."
+        )
+    return (
+        f"Desired start remains {requested_start}. Use readiness as a coverage profile, not as a mandatory "
+        "research-design verdict."
+    )
+
+
 def render_discovery_readiness_section(discovery: dict) -> str:
     report = discovery.get("data_readiness") or {}
     summary = report.get("summary") or {}
@@ -1723,6 +1760,9 @@ def render_discovery_readiness_section(discovery: dict) -> str:
         lines.append(f"- warning: `{warning}`")
     for line in readiness_recommendation_lines(discovery):
         lines.append(f"- coverage_hint: `{line}`")
+    guidance = render_readiness_guidance(discovery)
+    if guidance:
+        lines.append(f"- interpretation: `{guidance}`")
     return "\n".join(lines)
 
 
