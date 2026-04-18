@@ -44,6 +44,7 @@ abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 
 - `discovery.json`: candidate universe only
 - `readiness.json`: advisory coverage report only
+- session `backtest_start`: default research target, not a mandatory branch runtime start
 
 ### Branch artifacts
 
@@ -66,6 +67,7 @@ strategy scaffold.
 3. Run `prepare-branch` before a recorded round.
 4. Treat readiness as advisory, not as a hard branch filter.
 5. Prefer injected context over hard-coded file paths.
+6. Let `branch.yaml.requested_start` override the session default when the branch needs a narrower window.
 
 ## Auth
 

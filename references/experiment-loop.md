@@ -26,6 +26,10 @@ should already be acceptable.
 - prepare step: branch input resolution
 - run step: evaluation and recording
 
+Session `backtest_start` is the default exploration target. When
+`branch.yaml.requested_start` is set explicitly, that branch start should drive
+prepare/debug/run for the branch.
+
 ## Branch Rules
 
 Before a recorded round, the branch should already have:

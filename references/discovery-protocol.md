@@ -44,6 +44,7 @@ Use it to answer:
 - how early target data is observed
 - which discovery tickers have partial or stronger coverage
 - whether strict overlap is likely expensive
+- whether the session default start and a branch's explicit start are meaningfully different
 
 Do not use it to collapse every branch onto the latest common start unless the
 branch really depends on strict overlap.

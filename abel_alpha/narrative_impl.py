@@ -956,9 +956,11 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         text=True,
         env=runtime_env,
     )
-    sys.stdout.write(completed.stdout)
-    sys.stderr.write(completed.stderr)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
     if not output_path.exists():
+        if completed.stdout:
+            sys.stderr.write(completed.stdout)
         raise RuntimeError(
             "Abel-edge warm-cache did not produce dependencies output. "
             "Fix the runtime error above before continuing."
@@ -986,11 +988,23 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
             },
         )
         render_session(session)
+    cache_results = [
+        item for item in (cache_payload.get("results") or []) if isinstance(item, dict)
+    ]
+    warm_ok = [item for item in cache_results if item.get("ok")]
+    warm_fail = [item for item in cache_results if not item.get("ok")]
     print(f"Prepared branch inputs: {output_path.relative_to(session)}")
     print(f"  target: {target}")
     print(f"  selected_drivers: {len(selected_drivers)}")
+    print(f"  symbols: {', '.join(symbols)}")
+    print(f"  cache_results: ok={len(warm_ok)} fail={len(warm_fail)}")
     for line in advisory_lines:
         print(f"  {line}")
+    if warm_fail:
+        for item in warm_fail[:5]:
+            print(
+                f"  cache_failure: {item.get('symbol', 'unknown')} -> {item.get('error', 'unknown')}"
+            )
     print("")
     print("Next:")
     print(f"  abel-alpha debug-branch --branch {branch}")
@@ -2363,6 +2377,13 @@ def session_next_step(
     discovery: dict,
     readiness: dict,
 ) -> str:
+    if not branches:
+        return (
+            f"Create the first branch with "
+            f"`abel-alpha init-branch --session {session} --branch-id graph-v1`, "
+            "then edit `branch.yaml`, run `prepare-branch`, and use `debug-branch` "
+            "before recording the first round."
+        )
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]
     has_historical_keep = any(
@@ -2426,7 +2447,10 @@ def session_next_step(
             f"No KEEP baseline exists yet. Resume `{leader['branch_id']}` first because it is currently the strongest "
             "candidate, or open a sibling branch only if you have a genuinely different causal thesis."
         )
-    return "Revise the discarded branches or open a new branch with a different hypothesis before the next validation round."
+    return (
+        "Open a new branch only if you have a genuinely different causal thesis; "
+        "otherwise continue refining the current working candidate."
+    )
 
 
 def latest_recorded_hypothesis(branch: dict) -> str:

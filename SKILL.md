@@ -58,6 +58,7 @@ Current framework rules:
 3. `branch.yaml` defines the branch runtime intent.
 4. `prepare-branch` resolves inputs and warms edge cache before a recorded round.
 5. `run-branch` should consume prepared branch inputs, not invent them at runtime.
+6. Session `backtest_start` is the default research target; `branch.yaml.requested_start` may override it explicitly.
 
 When writing `engine.py`:
 
@@ -71,6 +72,7 @@ Keep readiness advisory:
 - use it to understand coverage
 - do not treat it as a hard permission system
 - do not force all drivers to share the latest common start unless the branch thesis truly requires strict overlap
+- do not confuse session start guidance with the branch's explicit requested start
 
 Default references:
 

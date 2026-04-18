@@ -196,6 +196,7 @@ abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "basel
 - branch owns `branch.yaml`
 - edge owns the market-data cache
 - `prepare-branch` should run before a recorded round
+- session `backtest_start` is a default target; branch `requested_start` can override it explicitly
 
 If your environment cannot create a new venv, point alpha at an existing
 interpreter with `abel-alpha env init --runtime-python /path/to/python`.
@@ -236,6 +237,8 @@ Run `doctor` before `init-session`. If it reports `auth_missing`, complete
 `causal-abel` OAuth or use the standalone edge login fallback first.
 Treat `branch.yaml` as the branch definition and `prepare-branch` as the
 required pre-run input resolution step.
+Treat session readiness as advisory context; the branch's explicit
+`requested_start` is the runtime start when it is set.
 
 ### Run one research round
 ```bash
