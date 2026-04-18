@@ -275,6 +275,23 @@ def main() -> int:
     init_branch.add_argument("--session", required=True)
     init_branch.add_argument("--branch-id", required=True)
 
+    prepare_branch = sub.add_parser(
+        "prepare-branch",
+        help="Resolve branch data dependencies and warm the edge cache before evaluation",
+    )
+    prepare_branch.add_argument("--branch", required=True)
+    prepare_branch.add_argument(
+        "--python-bin",
+        default=None,
+        help="Interpreter used to run causal-edge warm-cache (defaults to the workspace python when available)",
+    )
+    prepare_branch.add_argument(
+        "--cache-limit",
+        type=int,
+        default=5000,
+        help="Warm-cache fetch limit used for each requested symbol",
+    )
+
     run_branch = sub.add_parser(
         "run-branch", help="Run edge evaluate and record a branch round"
     )
@@ -451,9 +468,12 @@ def main() -> int:
         print("Next:")
         print(f"  edit {branch / BRANCH_SPEC_FILENAME}")
         print(f"  edit {branch / 'engine.py'}")
+        print(f"  abel-alpha prepare-branch --branch {branch}")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
+    if args.command == "prepare-branch":
+        return prepare_branch_inputs(args)
     if args.command == "run-branch":
         return run_branch_round(args)
     if args.command == "debug-branch":
@@ -849,6 +869,112 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         )
         render_session(session)
     return branch
+
+
+def prepare_branch_inputs(args: argparse.Namespace) -> int:
+    branch = resolve_workspace_arg_path(args.branch).resolve()
+    session = branch.parent.parent
+    workspace_root = find_workspace_root(branch)
+    discovery = load_discovery(session)
+    branch_spec = load_branch_spec(branch)
+    if not branch_spec:
+        raise RuntimeError(f"Missing {BRANCH_SPEC_FILENAME} under {branch}")
+
+    target = str(branch_spec.get("target") or discovery.get("ticker") or "").strip().upper()
+    if not target:
+        raise RuntimeError("Branch spec is missing a target ticker.")
+    selected_drivers = [
+        str(item).strip().upper()
+        for item in (branch_spec.get("selected_drivers") or [])
+        if str(item).strip()
+    ]
+    symbols = [target]
+    for ticker in selected_drivers:
+        if ticker not in symbols:
+            symbols.append(ticker)
+
+    requested_start = str(
+        branch_spec.get("requested_start") or _get_backtest_start(discovery)
+    ).strip()
+    dependencies = branch_dependencies_payload(
+        branch=branch,
+        branch_spec=branch_spec,
+        target=target,
+        selected_drivers=selected_drivers,
+        requested_start=requested_start,
+    )
+
+    python_bin = args.python_bin or resolve_default_python_bin(branch)
+    output_path = dependencies_path(branch)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "warm-cache",
+        "--adapter",
+        "abel",
+        "--start",
+        requested_start,
+        "--timeframe",
+        str((branch_spec.get("data_requirements") or {}).get("timeframe") or "1d"),
+        "--limit",
+        str(args.cache_limit),
+        "--output-json",
+        str(output_path),
+    ]
+    for symbol in symbols:
+        command.extend(["--symbol", symbol])
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    sys.stdout.write(completed.stdout)
+    sys.stderr.write(completed.stderr)
+    if not output_path.exists():
+        raise RuntimeError(
+            "Abel-edge warm-cache did not produce dependencies output. "
+            "Fix the runtime error above before continuing."
+        )
+    cache_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    dependencies["cache"] = cache_payload
+    output_path.write_text(json.dumps(dependencies, indent=2), encoding="utf-8")
+
+    with SessionLock(session):
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "branch_prepared",
+                "branch_id": branch.name,
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"Prepared branch inputs for {branch.name} with {len(symbols)} symbol(s)"
+                ),
+                "artifact_path": str(output_path.relative_to(session)),
+            },
+        )
+        render_session(session)
+    print(f"Prepared branch inputs: {output_path.relative_to(session)}")
+    print(f"  target: {target}")
+    print(f"  selected_drivers: {len(selected_drivers)}")
+    print("")
+    print("Next:")
+    print(f"  abel-alpha debug-branch --branch {branch}")
+    print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
+    return completed.returncode
 
 
 def run_branch_round(args: argparse.Namespace) -> int:
@@ -1939,6 +2065,9 @@ def build_branch_context(
     """Build the structured context passed into causal-edge evaluate."""
     workspace_root = find_workspace_root(branch)
     branch_spec = load_branch_spec(branch)
+    dependencies = {}
+    if dependencies_path(branch).exists():
+        dependencies = json.loads(dependencies_path(branch).read_text(encoding="utf-8"))
     return {
         "schema_version": 1,
         "workspace_root": str(workspace_root) if workspace_root is not None else None,
@@ -1949,11 +2078,13 @@ def build_branch_context(
         "branch_dir": str(branch.resolve()),
         "outputs_dir": str((branch / "outputs").resolve()),
         "branch_spec_path": str(branch_spec_path(branch).resolve()),
+        "dependencies_path": str(dependencies_path(branch).resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
         "readiness_path": str((session / READINESS_FILENAME).resolve()),
         "ticker": discovery.get("ticker", session.parent.name.upper()),
         "backtest_start": backtest_start,
         "branch_spec": branch_spec,
+        "dependencies": dependencies,
         "discovery": discovery,
         "readiness": readiness,
     }
@@ -2184,6 +2315,26 @@ def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict)
             "timeframe": "1d",
             "fields": ["close"],
         },
+    }
+
+
+def branch_dependencies_payload(
+    *,
+    branch: Path,
+    branch_spec: dict,
+    target: str,
+    selected_drivers: list[str],
+    requested_start: str,
+) -> dict:
+    return {
+        "version": 1,
+        "branch_id": branch.name,
+        "target": target,
+        "selected_drivers": selected_drivers,
+        "requested_start": requested_start,
+        "overlap_mode": branch_spec.get("overlap_mode") or "target_only",
+        "data_requirements": branch_spec.get("data_requirements") or {"timeframe": "1d"},
+        "prepared_at": _now(),
     }
 
 
