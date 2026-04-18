@@ -1316,6 +1316,16 @@ def debug_branch_run(args: argparse.Namespace) -> int:
         text=True,
         env=runtime_env,
     )
+    debug_snapshot = build_debug_snapshot(
+        completed=completed,
+        session=session,
+        context_path=context_path,
+        debug_result_path=debug_result_path,
+        backtest_start=backtest_start,
+    )
+    with SessionLock(session):
+        persist_debug_snapshot(branch, debug_snapshot)
+        render_session(session)
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
     print(f"Debug context: {context_path.relative_to(session)}")
@@ -1386,6 +1396,8 @@ def print_status(session: Path) -> None:
         latest_note = (
             read_round_note(branch["branch_dir"], latest.get("round_id", "")) if latest else {}
         )
+        if not latest_note:
+            latest_note = latest_debug_snapshot(branch["branch_dir"])
         branch_hypothesis = current_branch_hypothesis(branch["branch_dir"], branch["rows"])
         keep_count = sum(1 for row in branch["rows"] if row.get("decision") == "keep")
         discard_count = sum(
@@ -1580,12 +1592,28 @@ def build_session_readme(
         if branch["rows"] and branch["rows"][-1].get("decision") == "discard"
     ]
     leader = select_leader(branches)
+    debugged_branches = [
+        branch for branch in branches if latest_debug_snapshot(branch["branch_dir"])
+    ]
     executive = "No validated rounds yet. Start the first branch to establish the session baseline."
     if branches and not any(branch["rows"] for branch in branches):
-        executive = (
-            f"{len(branches)} branch(es) have been initialized, but no validated rounds exist yet. "
-            f"Edit `{branches[0]['branch_id']}` and use `abel-alpha debug-branch` before recording the first round."
-        )
+        executive = f"{len(branches)} branch(es) have been initialized, but no validated rounds exist yet."
+        if debugged_branches:
+            latest_debug_branch = max(
+                debugged_branches,
+                key=lambda branch: latest_debug_snapshot(branch["branch_dir"]).get("updated_at", ""),
+            )
+            debug_note = latest_debug_snapshot(latest_debug_branch["branch_dir"])
+            executive += (
+                f" {len(debugged_branches)} branch(es) have already been debugged; "
+                f"latest blocker is `{latest_debug_branch['branch_id']}` with signature "
+                f"`{debug_note.get('failure_signature', 'unknown')}`."
+            )
+        else:
+            executive += (
+                f" Edit `{branches[0]['branch_id']}` and use `abel-alpha debug-branch` "
+                "before recording the first round."
+            )
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
         leader_note = read_round_note(leader["branch_dir"], latest.get("round_id", ""))
@@ -1602,9 +1630,17 @@ def build_session_readme(
 
     branch_lines = (
         "\n".join(
-            f"1. `{branch['branch_id']}` - {len(branch['rows'])} rounds, latest "
-            f"`{(branch['rows'][-1] if branch['rows'] else {}).get('round_id', 'none')}` "
-            f"{(branch['rows'][-1] if branch['rows'] else {}).get('decision', 'pending')}"
+            (
+                f"1. `{branch['branch_id']}` - {len(branch['rows'])} rounds, latest "
+                f"`{branch['rows'][-1].get('round_id', 'none')}` {branch['rows'][-1].get('decision', 'pending')}"
+                if branch["rows"]
+                else (
+                    f"1. `{branch['branch_id']}` - pending, latest debug "
+                    f"`{latest_debug_snapshot(branch['branch_dir']).get('failure_signature', 'not run')}`"
+                    if latest_debug_snapshot(branch["branch_dir"])
+                    else f"1. `{branch['branch_id']}` - scaffolded, no rounds or debug runs yet"
+                )
+            )
             for branch in branches
         )
         or "1. `No branches yet.`"
@@ -1612,7 +1648,25 @@ def build_session_readme(
 
     snapshot_lines = (
         "\n".join(
-            build_branch_snapshot_line(branch) for branch in branches if branch["rows"]
+            line
+            for branch in branches
+            for line in (
+                [build_branch_snapshot_line(branch)]
+                if branch["rows"]
+                else (
+                    [
+                        (
+                            f"1. `{branch['branch_id']}` -> `debug` / "
+                            f"`{latest_debug_snapshot(branch['branch_dir']).get('verdict', 'ERROR')}` / "
+                            f"signature `{latest_debug_snapshot(branch['branch_dir']).get('failure_signature', 'unknown')}`. "
+                            f"Why: `{current_branch_hypothesis(branch['branch_dir'], branch['rows']) or latest_debug_snapshot(branch['branch_dir']).get('summary', 'not recorded')}`. "
+                            f"Next: `{latest_debug_snapshot(branch['branch_dir']).get('next_step', 'Fix the engine and rerun debug.')}`"
+                        )
+                    ]
+                    if latest_debug_snapshot(branch["branch_dir"])
+                    else []
+                )
+            )
         )
         or "1. `No branch outcomes yet.`"
     )
@@ -1676,6 +1730,8 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 def build_branch_readme(branch: dict, latest_note: dict[str, str], exp_id: str) -> str:
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
+    debug_note = latest_debug_snapshot(branch["branch_dir"])
+    diagnostics_note = latest_note or debug_note
     keep_rows = [row for row in rows if row.get("decision") == "keep"]
     branch_hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
     ledger = (
@@ -1694,10 +1750,10 @@ generated by Abel-alpha narrative layer
 - branch_id: `{branch["branch_id"]}`
 - ticker: `{latest.get("ticker", branch["ticker"])}`
 - exp_id: `{exp_id}`
-- current_status: `{latest.get("decision", "scaffolded" if not rows else "exploring")}`
+- current_status: `{latest.get("decision", "debugged" if debug_note else "scaffolded" if not rows else "exploring")}`
 - total_rounds: `{len(rows)}`
-- latest_round: `{latest.get("round_id", "none")}`
-- validation_status: `{latest.get("verdict", "not_validated")}`
+- latest_round: `{latest.get("round_id", "debug" if debug_note else "none")}`
+- validation_status: `{latest.get("verdict", diagnostics_note.get("verdict", "not_validated"))}`
 
 ## Branch Thesis
 
@@ -1706,31 +1762,31 @@ See `branch.yaml` for the explicit branch inputs and `thesis.md` for the branch 
 ## Latest Conclusion
 
 - decision: `{latest.get("decision", "pending")}`
-- summary: `{latest.get("description", "No rounds recorded yet.")}`
-- next_step: `{latest_note.get("next_step", "Edit engine.py and use `abel-alpha debug-branch` before the first recorded round.")}`
+- summary: `{latest.get("description", diagnostics_note.get("summary", "No rounds recorded yet."))}`
+- next_step: `{diagnostics_note.get("next_step", "Edit engine.py and use `abel-alpha debug-branch` before the first recorded round.")}`
 
 ## Latest Diagnostics
 
-- failure_signature: `{latest_note.get("failure_signature", "not recorded")}`
-- runtime_stage: `{latest_note.get("runtime_stage", "not recorded")}`
-- signal_activity: `{latest_note.get("signal_activity", "not recorded")}`
-- diagnostic_hints: `{latest_note.get("diagnostic_hints", "not recorded")}`
+- failure_signature: `{diagnostics_note.get("failure_signature", "not recorded")}`
+- runtime_stage: `{diagnostics_note.get("runtime_stage", "not recorded")}`
+- signal_activity: `{diagnostics_note.get("signal_activity", "not recorded")}`
+- diagnostic_hints: `{diagnostics_note.get("diagnostic_hints", "not recorded")}`
 
 ## Latest Artifacts
 
-- alpha_context_mode: `{latest_note.get("context_mode", "not recorded")}`
-- alpha_context: `{latest_note.get("context_path", "not recorded")}`
+- alpha_context_mode: `{diagnostics_note.get("context_mode", "not recorded")}`
+- alpha_context: `{diagnostics_note.get("context_path", "not recorded")}`
 - branch_spec: `{BRANCH_SPEC_FILENAME}`
 - prepared_inputs: `{"inputs/" + DEPENDENCIES_FILENAME if dependencies_path(branch["branch_dir"]).exists() else "not prepared"}`
-- edge_result: `{latest_note.get("result_path", latest.get("result_path", "not recorded"))}`
-- edge_report: `{latest_note.get("report_path", latest.get("report_path", "not recorded"))}`
-- edge_handoff: `{latest_note.get("handoff_path", latest.get("handoff_path", "not recorded"))}`
+- edge_result: `{diagnostics_note.get("result_path", latest.get("result_path", "not recorded"))}`
+- edge_report: `{diagnostics_note.get("report_path", latest.get("report_path", "not recorded"))}`
+- edge_handoff: `{diagnostics_note.get("handoff_path", latest.get("handoff_path", "not recorded"))}`
 
 ## Decision Rationale
 
 1. latest_hypothesis: `{branch_hypothesis or latest_note.get("hypothesis", "not recorded")}`
-1. latest_summary: `{latest_note.get("summary", latest.get("description", "not recorded"))}`
-1. latest_failures: `{latest_note.get("failures", "none")}`
+1. latest_summary: `{diagnostics_note.get("summary", latest.get("description", "not recorded"))}`
+1. latest_failures: `{diagnostics_note.get("failures", "none")}`
 1. hypothesis_status: `{"explicit" if has_explicit_hypothesis(branch_hypothesis) else "needs work"}`
 
 ## Round Ledger
@@ -2281,6 +2337,14 @@ def session_next_step(
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
     if pending:
         branch = pending[-1]
+        debug_note = latest_debug_snapshot(branch["branch_dir"])
+        if debug_note:
+            return (
+                f"Fix `{branch['branch_id']}` after the latest debug blocker "
+                f"`{debug_note.get('failure_signature', 'unknown')}` "
+                f"({debug_note.get('summary', 'see debug result')}), then rerun "
+                f"`abel-alpha debug-branch --branch {branch['branch_dir']}` before recording the first round."
+            )
         warning = build_readiness_warning(readiness)
         recommendations = ", ".join(readiness_recommendation_lines(readiness))
         guidance = (
@@ -2301,8 +2365,8 @@ def session_next_step(
         branch_hypothesis = current_branch_hypothesis(leader["branch_dir"], leader["rows"])
         if not has_explicit_hypothesis(branch_hypothesis):
             return (
-                f"Before the next round, persist an explicit hypothesis for `{leader['branch_id']}` with "
-                f"`abel-alpha set-hypothesis --branch {leader['branch_dir']} --text \"...\"`, then validate the next causal claim."
+                f"Before the next round, add an explicit hypothesis to "
+                f"`{leader['branch_id']}/branch.yaml`, then validate the next causal claim."
             )
         if has_historical_keep:
             return (
@@ -2621,6 +2685,10 @@ def update_backtest_start(
 
 
 def current_branch_hypothesis(branch_dir: Path, rows: list[dict[str, str]] | None = None) -> str:
+    branch_spec = load_branch_spec(branch_dir)
+    spec_hypothesis = str(branch_spec.get("hypothesis") or "").strip()
+    if has_explicit_hypothesis(spec_hypothesis):
+        return spec_hypothesis
     state = load_branch_state(branch_dir)
     hypothesis = str(state.get("hypothesis") or "").strip()
     if has_explicit_hypothesis(hypothesis):
@@ -2642,6 +2710,10 @@ def should_emit_missing_hypothesis_warning(branch: Path) -> bool:
 
 
 def persist_branch_hypothesis(branch: Path, hypothesis: str, *, source: str) -> None:
+    branch_spec = load_branch_spec(branch)
+    if branch_spec:
+        branch_spec["hypothesis"] = hypothesis
+        write_branch_spec(branch, branch_spec)
     state = load_branch_state(branch)
     state["hypothesis"] = hypothesis
     state["hypothesis_source"] = source
@@ -2658,10 +2730,91 @@ def resolve_branch_hypothesis(
     hypothesis = str(explicit_hypothesis or "").strip()
     if has_explicit_hypothesis(hypothesis):
         return hypothesis, "round_argument"
-    stored = current_branch_hypothesis(branch, rows)
+    branch_spec = load_branch_spec(branch)
+    spec_hypothesis = str(branch_spec.get("hypothesis") or "").strip()
+    if has_explicit_hypothesis(spec_hypothesis):
+        return spec_hypothesis, "branch_yaml"
+    state = load_branch_state(branch)
+    stored = str(state.get("hypothesis") or "").strip()
     if has_explicit_hypothesis(stored):
         return stored, "branch_state"
+    recorded = latest_recorded_hypothesis({"branch_dir": branch, "rows": rows})
+    if has_explicit_hypothesis(recorded):
+        return recorded, "recorded_round"
     return "", "missing"
+
+
+def latest_debug_snapshot(branch_dir: Path) -> dict[str, str]:
+    state = load_branch_state(branch_dir)
+    payload = state.get("last_debug")
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def persist_debug_snapshot(branch: Path, payload: dict[str, str]) -> None:
+    state = load_branch_state(branch)
+    state["last_debug"] = payload
+    write_branch_state(branch, state)
+
+
+def build_debug_snapshot(
+    *,
+    completed: subprocess.CompletedProcess[str],
+    session: Path,
+    context_path: Path,
+    debug_result_path: Path,
+    backtest_start: str,
+) -> dict[str, str]:
+    result: dict[str, object] = {}
+    if debug_result_path.exists():
+        try:
+            parsed = json.loads(debug_result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            result = parsed
+    diagnostics = result.get("diagnostics") or {}
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    signal = diagnostics.get("signal") or {}
+    if not isinstance(signal, dict):
+        signal = {}
+    failures = [
+        str(item).strip()
+        for item in (result.get("failures") or [])
+        if str(item).strip()
+    ]
+    hints = [
+        str(item).strip()
+        for item in (diagnostics.get("hints") or [])
+        if str(item).strip()
+    ]
+    fallback_error = (
+        completed.stderr.strip()
+        or completed.stdout.strip()
+        or "Debug evaluation did not produce a structured result."
+    )
+    summary = failures[0] if failures else fallback_error.splitlines()[-1]
+    next_step = hints[0] if hints else "Fix the blocker in engine.py, then rerun `abel-alpha debug-branch`."
+    return {
+        "updated_at": _now(),
+        "returncode": str(completed.returncode),
+        "verdict": str(result.get("verdict") or ("PASS" if completed.returncode == 0 else "ERROR")),
+        "summary": summary,
+        "failures": "; ".join(failures) or summary,
+        "failure_signature": str(diagnostics.get("failure_signature") or "debug_runtime_check"),
+        "runtime_stage": str(diagnostics.get("runtime_stage") or "debug_evaluate"),
+        "signal_activity": (
+            f"{int(signal.get('active_days', 0) or 0)} / {int(signal.get('total_days', 0) or 0)}"
+        ),
+        "diagnostic_hints": "; ".join(hints) or "none",
+        "next_step": next_step,
+        "context_mode": "injected",
+        "context_path": str(context_path.relative_to(session)),
+        "result_path": str(debug_result_path.relative_to(session)) if debug_result_path.exists() else "not recorded",
+        "handoff_path": "not recorded",
+        "report_path": "not recorded",
+        "requested_start": backtest_start,
+    }
 
 
 def render_default_engine_template(discovery: dict, readiness: dict, session: Path) -> str:
