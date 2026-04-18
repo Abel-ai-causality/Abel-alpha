@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 
-from abel_alpha.edge_runtime import probe_edge_context_json, probe_edge_discovery_json
+from abel_alpha.edge_runtime import probe_edge_context_json, probe_edge_discovery_payload
 from abel_alpha.workspace import (
     find_workspace_root,
     load_workspace_manifest,
@@ -29,7 +29,7 @@ class EnvInitResult:
     alpha_source: Path
     edge_install_target: str
     edge_install_mode: str
-    edge_discovery_json_capable: bool | None
+    edge_discovery_payload_capable: bool | None
     edge_context_json_capable: bool | None
     alpha_editable: bool
     created_venv: bool
@@ -144,7 +144,7 @@ def init_workspace_env(
         edge_install_mode=edge_install_mode,
     )
 
-    edge_discovery_json_capable = probe_edge_discovery_json(python_path, workspace_root)
+    edge_discovery_payload_capable = probe_edge_discovery_payload(python_path, workspace_root)
     edge_context_json_capable = probe_edge_context_json(python_path, workspace_root)
 
     return EnvInitResult(
@@ -154,7 +154,7 @@ def init_workspace_env(
         alpha_source=resolved_alpha_source,
         edge_install_target=edge_install_target,
         edge_install_mode=edge_install_mode,
-        edge_discovery_json_capable=edge_discovery_json_capable,
+        edge_discovery_payload_capable=edge_discovery_payload_capable,
         edge_context_json_capable=edge_context_json_capable,
         alpha_editable=alpha_editable,
         created_venv=created_venv,

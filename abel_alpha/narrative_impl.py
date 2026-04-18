@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
-from abel_alpha.edge_runtime import build_workspace_runtime_env, probe_edge_context_json
+from abel_alpha.edge_runtime import build_workspace_runtime_env
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     build_default_manifest,
@@ -87,7 +87,7 @@ Avoid blanket `dropna()` on a joined price frame before confirming the target ti
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
 do not hide setup failures behind synthetic flat outputs.
 Current readiness warning: {readiness_warning}
-Coverage hints: {recommended_starts}
+Coverage hints: {coverage_hints_text}
 """
  
 from __future__ import annotations
@@ -125,9 +125,8 @@ class BranchEngine(StrategyEngine):
         # Build signals from those aligned bars, then return self.finalize_signals(...)
         readiness = self.research_data_readiness()
         coverage_hints = readiness.get("coverage_hints") or {{}}
-        recommendations = readiness.get("recommended_starts") or {{}}
-        target_start = coverage_hints.get("target_safe_start") or recommendations.get("target_recommended_start")
-        common_start = coverage_hints.get("dense_overlap_hint_start") or recommendations.get("common_recommended_start")
+        target_start = coverage_hints.get("target_safe_start")
+        common_start = coverage_hints.get("dense_overlap_hint_start")
         raise NotImplementedError(
             "This branch is still using the default Abel-alpha scaffold. "
             "Replace the stub in engine.py before recording a real round. "
@@ -511,15 +510,15 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
     if result.runtime_mode == "existing_python":
         print("  runtime_note: using an existing interpreter instead of creating the workspace .venv")
-    if result.edge_discovery_json_capable is not None:
-        print(f"  edge_discovery_json: {'yes' if result.edge_discovery_json_capable else 'no'}")
+    if result.edge_discovery_payload_capable is not None:
+        print(f"  edge_discovery_payload: {'yes' if result.edge_discovery_payload_capable else 'no'}")
     if result.edge_context_json_capable is not None:
         print(f"  edge_context_json: {'yes' if result.edge_context_json_capable else 'no'}")
     print("")
-    if result.edge_discovery_json_capable is False or result.edge_context_json_capable is False:
+    if result.edge_discovery_payload_capable is False or result.edge_context_json_capable is False:
         print("Warning:")
-        print("  Installed Abel-edge is usable, but some newer CLI/runtime contracts are not available yet.")
-        print("  Run `abel-alpha doctor` for the full compatibility summary before relying on those paths.")
+        print("  Installed Abel-edge is missing required alpha contracts.")
+        print("  Run `abel-alpha doctor` and upgrade the workspace runtime before starting research.")
         print("")
     print("Next:")
     print("  abel-alpha doctor")
@@ -672,13 +671,12 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
             MissingAbelApiKeyError,
             require_api_key,
         )
+        from causal_edge.plugins.abel.discover import discover_graph_payload
     except ImportError as exc:
         raise RuntimeError(
             "Live Abel discovery requires causal-edge with the Abel plugin installed. "
             "Create a virtual environment, install causal-edge, then retry."
         ) from exc
-
-    from causal_edge.plugins.abel.discover import discover_graph_nodes
     workspace_root = find_workspace_root()
     if workspace_root is not None:
         os.environ.setdefault(
@@ -696,72 +694,10 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
             f"{ticker.upper()} --exp-id <exp-id> --discover`."
         ) from exc
 
-    try:
-        from causal_edge.plugins.abel.discover import discover_graph_payload
-
-        payload = discover_graph_payload(ticker.upper(), mode="all", limit=limit)
-        payload["backtest"] = {"start": DEFAULT_BACKTEST_START}
-        payload.setdefault("created_at", _now())
-        return payload
-    except ImportError:
-        pass
-    except AttributeError:
-        pass
-
-    # Fallback for older causal-edge builds that still expose text-only discovery.
-    parents_output = discover_graph_nodes(ticker.upper(), mode="parents", limit=limit)
-    blanket_output = discover_graph_nodes(ticker.upper(), mode="mb", limit=limit)
-    return build_discovery_payload_from_text(
-        ticker=ticker.upper(),
-        parents_output=parents_output,
-        blanket_output=blanket_output,
-    )
-
-
-def build_discovery_payload_from_text(
-    *,
-    ticker: str,
-    parents_output: str,
-    blanket_output: str,
-) -> dict:
-    """Build the standard discovery payload from legacy text output."""
-    parents = parse_discovery_items(parents_output)
-    blanket_items = parse_discovery_items(blanket_output)
-    parent_keys = {(item["ticker"], item["field"]) for item in parents}
-
-    children = []
-    blanket_new = []
-    seen_children = set()
-    seen_blanket = set()
-
-    for item in blanket_items:
-        key = (item["ticker"], item["field"])
-        roles = item.get("roles", [])
-        if "child" in roles and key not in seen_children:
-            children.append({"ticker": item["ticker"], "field": item["field"]})
-            seen_children.add(key)
-            continue
-        if key in parent_keys or key in seen_blanket:
-            continue
-        blanket_new.append(
-            {
-                "ticker": item["ticker"],
-                "field": item["field"],
-                "roles": roles,
-            }
-        )
-        seen_blanket.add(key)
-
-    return {
-        "ticker": ticker.upper(),
-        "source": "abel_live",
-        "parents": parents,
-        "blanket_new": blanket_new,
-        "children": children,
-        "K_discovery": len(parents),
-        "backtest": {"start": DEFAULT_BACKTEST_START},
-        "created_at": _now(),
-    }
+    payload = discover_graph_payload(ticker.upper(), mode="all", limit=limit)
+    payload["backtest"] = {"start": DEFAULT_BACKTEST_START}
+    payload.setdefault("created_at", _now())
+    return payload
 
 
 def write_discovery(session: Path, discovery_data: dict) -> None:
@@ -802,10 +738,10 @@ def refresh_data_readiness(
         for item in report.get("results", [])
         if item.get("usable")
     ]
-    enriched["full_window_tickers"] = [
+    enriched["start_covered_tickers"] = [
         item.get("ticker")
         for item in report.get("results", [])
-        if item.get("status") == "full_window"
+        if item.get("covers_requested_start")
     ]
     return enriched
 
@@ -860,48 +796,6 @@ def run_edge_verify_data(
         return json.loads(output_path.read_text(encoding="utf-8"))
     finally:
         output_path.unlink(missing_ok=True)
-
-
-def parse_discovery_items(output: str) -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
-    current: dict[str, object] | None = None
-
-    for raw_line in output.splitlines():
-        line = raw_line.rstrip()
-        if line.startswith("  - ticker: "):
-            if current is not None:
-                items.append(current)
-            current = {"ticker": line.split(": ", 1)[1].strip(), "roles": []}
-            continue
-        if current is None:
-            continue
-        stripped = line.strip()
-        if stripped.startswith("field: "):
-            current["field"] = stripped.split(": ", 1)[1].strip()
-            continue
-        if stripped.startswith("roles: [") and stripped.endswith("]"):
-            roles_text = stripped[len("roles: [") : -1].strip()
-            current["roles"] = [
-                role.strip() for role in roles_text.split(",") if role.strip()
-            ]
-
-    if current is not None:
-        items.append(current)
-
-    normalized = []
-    for item in items:
-        ticker = str(item.get("ticker", "")).strip()
-        field = str(item.get("field", "")).strip()
-        if not ticker or not field:
-            continue
-        normalized.append(
-            {
-                "ticker": ticker,
-                "field": field,
-                "roles": list(item.get("roles", [])),
-            }
-        )
-    return normalized
 
 
 def init_branch_dir(session: Path, branch_id: str) -> Path:
@@ -991,10 +885,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         for line in readiness_recommendation_lines(discovery):
-            print(f"Recommendation: {line}", file=sys.stderr)
+            print(f"Coverage hint: {line}", file=sys.stderr)
 
     python_bin = args.python_bin or resolve_default_python_bin(branch)
-    context_mode = "injected"
     command = [
         python_bin,
         "-m",
@@ -1010,11 +903,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
         str(handoff_path),
         "--start",
         backtest_start,
+        "--context-json",
+        str(context_path),
     ]
-    if edge_supports_context_json(python_bin, session):
-        command[6:6] = ["--context-json", str(context_path)]
-    else:
-        context_mode = "recorded_only_legacy_edge"
     runtime_env = (
         build_workspace_runtime_env(workspace_root)
         if workspace_root is not None
@@ -1080,7 +971,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
             summary=args.summary,
             next_step=args.next_step,
             actions=args.action + [f"hypothesis_source={hypothesis_source}"],
-            context_mode=context_mode,
+            context_mode="injected",
             context_path=str(context_path.relative_to(session)),
             result_path=str(result_path.relative_to(session)),
             report_path=str(report_path.relative_to(session)),
@@ -1138,11 +1029,6 @@ def run_branch_round(args: argparse.Namespace) -> int:
             },
         )
         render_session(session)
-    if context_mode != "injected":
-        print(
-            "Warning: installed Abel-edge does not support --context-json yet; "
-            "alpha context was recorded but not injected into the research engine context."
-        )
     print(f"Alpha context: {context_path.relative_to(session)}")
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
@@ -1182,11 +1068,11 @@ def debug_branch_run(args: argparse.Namespace) -> int:
         str(branch),
         "--start",
         backtest_start,
+        "--context-json",
+        str(context_path),
         "--output-json",
         str(debug_result_path),
     ]
-    if edge_supports_context_json(python_bin, session):
-        command[6:6] = ["--context-json", str(context_path)]
     runtime_env = (
         build_workspace_runtime_env(workspace_root)
         if workspace_root is not None
@@ -1678,7 +1564,7 @@ def build_thesis(branch: dict, discovery: dict) -> str:
     parents = format_discovery_nodes(discovery.get("parents", []), limit=5)
     blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
     usable = format_simple_nodes(discovery.get("usable_tickers", []), limit=8)
-    full_window = format_simple_nodes(discovery.get("full_window_tickers", []), limit=8)
+    start_covered = format_simple_nodes(discovery.get("start_covered_tickers", []), limit=8)
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -1701,7 +1587,7 @@ Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.g
 - direct_parents: `{parents}`
 - blanket_candidates: `{blanket}`
 - usable_tickers: `{usable}`
-- full_window_tickers: `{full_window}`
+- start_covered_tickers: `{start_covered}`
 
 ## Main Risks
 
@@ -1743,9 +1629,9 @@ def format_data_readiness_summary(discovery: dict) -> str:
         return ""
     requested = report.get("requested_window") or {}
     probe = report.get("probe") or {}
-    probe_limit = probe.get("limit") or report.get("probe_limit")
+    probe_limit = probe.get("limit")
     return (
-        f"{summary.get('full_window_count', 0)} full-window, "
+        f"{summary.get('start_covered_count', 0)} start-covered, "
         f"{summary.get('partial_window_count', 0)} partial, "
         f"{summary.get('no_data_count', 0)} no-data, "
         f"{summary.get('error_count', 0)} error "
@@ -1759,9 +1645,7 @@ def render_target_boundary_line(discovery: dict) -> str:
     classification = target_boundary.get("classification")
     if not classification:
         return "not recorded"
-    observed_first = target_boundary.get("observed_first_timestamp") or target_boundary.get(
-        "observed_first"
-    )
+    observed_first = target_boundary.get("observed_first_timestamp")
     observed_last = target_boundary.get("observed_last_timestamp")
     parts = [str(classification)]
     if observed_first:
@@ -1778,13 +1662,8 @@ def render_readiness_guidance(discovery: dict) -> str:
         return ""
     requested_start = _get_backtest_start(discovery)
     coverage_hints = report.get("coverage_hints") or {}
-    recommendations = report.get("recommended_starts") or {}
-    target_safe = coverage_hints.get("target_safe_start") or recommendations.get(
-        "target_recommended_start"
-    )
-    dense_overlap = coverage_hints.get("dense_overlap_hint_start") or recommendations.get(
-        "common_recommended_start"
-    )
+    target_safe = coverage_hints.get("target_safe_start")
+    dense_overlap = coverage_hints.get("dense_overlap_hint_start")
     if target_safe and dense_overlap and target_safe != dense_overlap:
         return (
             f"Desired start remains {requested_start}. Target-first research can begin around "
@@ -1811,13 +1690,13 @@ def render_discovery_readiness_section(discovery: dict) -> str:
     summary = report.get("summary") or {}
     if not summary:
         return "`No data readiness report recorded yet. Run live discovery again after edge verification is available.`"
-    full_window = ", ".join(discovery.get("full_window_tickers") or []) or "none"
+    start_covered = ", ".join(discovery.get("start_covered_tickers") or []) or "none"
     usable = ", ".join(discovery.get("usable_tickers") or []) or "none"
     lines = [
         f"- summary: `{format_data_readiness_summary(discovery)}`\n"
         f"- target_boundary: `{render_target_boundary_line(discovery)}`\n"
         f"- usable_tickers: `{usable}`\n"
-        f"- full_window_tickers: `{full_window}`"
+        f"- start_covered_tickers: `{start_covered}`"
     ]
     warning = build_readiness_warning(discovery)
     if warning:
@@ -1840,9 +1719,7 @@ def build_readiness_warning(discovery: dict) -> str:
     requested_start = (report.get("requested_window") or {}).get("start", "latest")
     target_boundary = report.get("target_boundary") or {}
     classification = target_boundary.get("classification")
-    observed_first = target_boundary.get("observed_first_timestamp") or target_boundary.get(
-        "observed_first"
-    )
+    observed_first = target_boundary.get("observed_first_timestamp")
     if classification == "confirmed_after_requested_start":
         return (
             "Target history begins after the requested backtest_start "
@@ -1858,7 +1735,7 @@ def build_readiness_warning(discovery: dict) -> str:
             "Target coverage before the requested backtest_start "
             f"{requested_start} is not yet confirmed.{observed_suffix}"
         )
-    if int(summary.get("full_window_count", 0) or 0) <= 0:
+    if int(summary.get("start_covered_count", 0) or 0) <= 0:
         return (
             "Discovered drivers are only partially available from the requested start "
             f"{requested_start}. Target-first research can still continue; use coverage hints only "
@@ -1870,14 +1747,9 @@ def build_readiness_warning(discovery: dict) -> str:
 def readiness_recommendation_lines(discovery: dict) -> list[str]:
     report = discovery.get("data_readiness") or {}
     coverage_hints = report.get("coverage_hints") or {}
-    recommendations = report.get("recommended_starts") or {}
     lines: list[str] = []
-    target_start = coverage_hints.get("target_safe_start") or recommendations.get(
-        "target_recommended_start"
-    )
-    common_start = coverage_hints.get("dense_overlap_hint_start") or recommendations.get(
-        "common_recommended_start"
-    )
+    target_start = coverage_hints.get("target_safe_start")
+    common_start = coverage_hints.get("dense_overlap_hint_start")
     if target_start:
         lines.append(f"target_safe={target_start}")
     if common_start:
@@ -2224,12 +2096,9 @@ def readiness_warning_fingerprint(discovery: dict) -> str:
     payload = {
         "requested_start": (report.get("requested_window") or {}).get("start"),
         "usable_count": summary.get("usable_count"),
-        "full_window_count": summary.get("full_window_count"),
+        "start_covered_count": summary.get("start_covered_count"),
         "classification": target_boundary.get("classification"),
-        "observed_first_timestamp": (
-            target_boundary.get("observed_first_timestamp")
-            or target_boundary.get("observed_first")
-        ),
+        "observed_first_timestamp": target_boundary.get("observed_first_timestamp"),
         "target_safe_start": coverage_hints.get("target_safe_start"),
         "dense_overlap_hint_start": coverage_hints.get("dense_overlap_hint_start"),
     }
@@ -2263,20 +2132,15 @@ def resolve_backtest_start_request(
     discovery = load_discovery(session)
     report = discovery.get("data_readiness") or {}
     coverage_hints = report.get("coverage_hints") or {}
-    recommended = report.get("recommended_starts") or {}
     if use_target_safe:
-        target_safe = coverage_hints.get("target_safe_start") or recommended.get(
-            "target_recommended_start"
-        )
+        target_safe = coverage_hints.get("target_safe_start")
         if not target_safe:
             raise RuntimeError(
                 "No target-safe readiness hint is available for this session."
             )
         return str(target_safe), "target_safe_hint"
     if use_coverage_hint:
-        coverage_hint = coverage_hints.get(
-            "dense_overlap_hint_start"
-        ) or recommended.get("common_recommended_start")
+        coverage_hint = coverage_hints.get("dense_overlap_hint_start")
         if not coverage_hint:
             raise RuntimeError(
                 "No dense-overlap readiness hint is available for this session."
@@ -2387,7 +2251,7 @@ def render_default_engine_template(discovery: dict, session: Path) -> str:
     return ENGINE_TEMPLATE.format(
         ticker=discovery.get("ticker", session.parent.name.upper()),
         readiness_warning=build_readiness_warning(discovery) or "none",
-        recommended_starts=", ".join(readiness_recommendation_lines(discovery)) or "none",
+        coverage_hints_text=", ".join(readiness_recommendation_lines(discovery)) or "none",
     )
 
 
@@ -2396,11 +2260,6 @@ def branch_uses_default_scaffold(branch: Path, discovery: dict, session: Path) -
     if not engine.exists():
         return False
     return engine.read_text(encoding="utf-8") == render_default_engine_template(discovery, session)
-
-
-def edge_supports_context_json(python_bin: str, cwd: Path) -> bool:
-    return probe_edge_context_json(python_bin, cwd) is True
-
 
 def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
     if not round_id:

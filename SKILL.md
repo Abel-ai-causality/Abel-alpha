@@ -79,18 +79,13 @@ Treat `abel-alpha doctor` as the gate before research:
 
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: install or authorize `causal-abel`, then rerun `doctor`
-- `env_missing` or `edge_missing`: repair the workspace runtime with
+- `env_missing`, `edge_missing`, or `edge_contract_missing`: repair the workspace runtime with
   `abel-alpha env init`
-
-If you intentionally point a workspace at an older custom `Abel-edge`,
-`doctor` may report `ready_legacy_edge` or `auth_missing_legacy_edge`. That
-means the fallback path is active and newer structured contracts are not
-available in that runtime.
 
 `Abel-edge` emits raw validation facts. `Abel-alpha` owns session/branch organization,
 keep/discard, process records, and narrative summaries. Use `init-session --discover`
 when you want the live Abel discovery persisted into `discovery.json` and the event trail.
-On a modern edge runtime, alpha also records edge-owned data readiness right after
+Alpha also records edge-owned data readiness right after
 live discovery so the session can see which drivers actually have usable history.
 Without `--discover`, `init-session` creates the session immediately and writes a
 pending discovery placeholder.
@@ -98,9 +93,6 @@ The session fixes one backtest `start`; `run-branch` leaves `end` unset so each 
 Each `run-branch` also writes `outputs/<round-id>-alpha-context.json` and injects it into
 `causal-edge evaluate --context-json`, so research engine code should prefer
 `self.context["discovery"]` and `self.context["discovery_path"]` over hard-coded relative paths.
-If you intentionally use an older custom `Abel-edge` without that argument,
-Abel-alpha still records the alpha context artifact and `abel-alpha doctor`
-will report the missing capability.
 `abel-alpha doctor` also reports whether auth came from the local workspace,
 process environment, or a shared external auth file.
 Use `abel-alpha debug-branch` when you need edge diagnostics and signal-activity
@@ -111,8 +103,8 @@ target ticker still remains present.
 Your job: write the strategy implementation.
 
 Use the packaged CLI as the primary interface. The old
-`python scripts/research_narrative.py ...` path is only a thin compatibility
-wrapper and should not be the default guidance for new users or agents.
+`python scripts/research_narrative.py ...` path is historical and should not be
+the default guidance for new users or agents.
 
 Default to causal-first research. Correlation-derived signals are allowed as supplements when they add orthogonal information, but they do not replace Abel-driven discovery as the main search path.
 

@@ -55,12 +55,7 @@ directory to expose the packaged `abel-alpha` CLI before creating a workspace.
 
 - `ready`: workspace, edge, and auth are ready
 - `auth_missing`: auth is the only missing piece
-- `env_missing` or `edge_missing`: rebuild the workspace runtime with `abel-alpha env init`
-
-If you intentionally point the workspace at an older custom `Abel-edge`, `doctor`
-may report `ready_legacy_edge` or `auth_missing_legacy_edge`. That means the
-fallback path is active and newer structured contracts are unavailable in that
-runtime.
+- `env_missing`, `edge_missing`, or `edge_contract_missing`: rebuild the workspace runtime with `abel-alpha env init`
 
 If you want live Abel discovery, complete auth before running `init-session --discover` or `causal-edge discover <TICKER>`:
 
@@ -77,13 +72,12 @@ When you use `causal-edge login` inside a workspace, alpha-managed runs now
 export that workspace `.env` through `ABEL_AUTH_ENV_FILE` so session and branch
 subprocesses resolve the same auth file deterministically.
 
-Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. On a modern `Abel-edge` runtime, alpha also runs edge-owned data verification immediately after discovery and records which tickers have full-window, partial-window, missing, or broken history. `init-session` fixes the initial session-level backtest start date, and `abel-alpha set-backtest-start` lets you later move that start explicitly to an exact date, the target-safe hint, or the denser coverage hint after reviewing readiness. `run-branch` passes the current session `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
+Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. Alpha also runs edge-owned data verification immediately after discovery and records which tickers cover the requested start, which remain partial, and which are missing or broken. `init-session` fixes the initial session-level backtest start date, and `abel-alpha set-backtest-start` lets you later move that start explicitly to an exact date, the target-safe hint, or the denser coverage hint after reviewing readiness. `run-branch` passes the current session `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
 Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
 
 Branch hypotheses are now persistent branch state rather than throwaway per-round CLI text. You can seed or refine that state with `abel-alpha set-hypothesis --branch ... --text "..."`, and later rounds reuse the latest explicit hypothesis automatically until you change it.
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Research engine code should prefer the injected `self.context` object, especially `self.context["discovery"]` and `self.context["discovery_path"]`, instead of assuming a relative workspace layout.
-If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but the research engine will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
 `abel-alpha doctor` also reports whether auth came from the local workspace, the process environment, or a shared external auth file, which matters when validating a clean first-use path.
 When you want fast, non-recording diagnostics while iterating on a branch, use `abel-alpha debug-branch --branch ...`. That delegates to edge's diagnostics-first debug surface without appending a new round to the narrative ledger.
 For first-pass strategy experiments, two common pitfalls are worth avoiding:
@@ -93,8 +87,8 @@ For first-pass strategy experiments, two common pitfalls are worth avoiding:
 ## Interface Policy
 
 Use the packaged `abel-alpha` CLI as the primary interface. The legacy
-`python scripts/research_narrative.py ...` entrypoint remains only as a thin
-compatibility wrapper and should not appear in new workflows, docs, or agents.
+`python scripts/research_narrative.py ...` entrypoint is historical and should
+not appear in new workflows, docs, or agents.
 
 ```mermaid
 flowchart TD
