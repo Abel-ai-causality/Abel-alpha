@@ -1647,7 +1647,7 @@ Explore {discovery.get("ticker", session.parent.name.upper())} in session `{sess
 
 ## Discovery Readiness
 
-{render_discovery_readiness_section(discovery, readiness)}
+{render_discovery_readiness_section(readiness)}
 
 ## Selection Narrative
 
@@ -1959,7 +1959,7 @@ def render_readiness_guidance(readiness: dict) -> str:
     summary = report.get("summary") or {}
     if not summary:
         return ""
-    requested_start = _get_backtest_start(discovery)
+    requested_start = str((report.get("requested_window") or {}).get("start") or "latest")
     coverage_hints = report.get("coverage_hints") or {}
     target_safe = coverage_hints.get("target_safe_start")
     dense_overlap = coverage_hints.get("dense_overlap_hint_start")
@@ -1984,7 +1984,7 @@ def render_readiness_guidance(readiness: dict) -> str:
     )
 
 
-def render_discovery_readiness_section(discovery: dict, readiness: dict) -> str:
+def render_discovery_readiness_section(readiness: dict) -> str:
     report = readiness or {}
     summary = report.get("summary") or {}
     if not summary:
