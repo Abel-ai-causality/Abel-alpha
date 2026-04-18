@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
+from abel_alpha.workspace import load_workspace_manifest, resolve_workspace_paths
 
 def run_python_json(
     python_path: Path | str,
@@ -77,10 +78,18 @@ print(json.dumps({
     )
 
 
-def probe_edge_discovery_json(python_path: Path | str, cwd: Path) -> bool | None:
-    """Probe whether the installed edge discover CLI exposes ``--json``."""
+def probe_edge_discovery_payload(python_path: Path | str, cwd: Path) -> bool | None:
+    """Probe whether the installed edge runtime exposes structured discovery payloads."""
     completed = subprocess.run(
-        [str(python_path), "-m", "causal_edge.cli", "discover", "--help"],
+        [
+            str(python_path),
+            "-c",
+            (
+                "import inspect\n"
+                "from causal_edge.plugins.abel.discover import discover_graph_payload\n"
+                "print(callable(discover_graph_payload))\n"
+            ),
+        ],
         cwd=cwd,
         check=False,
         capture_output=True,
@@ -88,7 +97,7 @@ def probe_edge_discovery_json(python_path: Path | str, cwd: Path) -> bool | None
     )
     if completed.returncode != 0:
         return None
-    return "--json" in (completed.stdout or "")
+    return completed.stdout.strip() == "True"
 
 
 def probe_edge_context_json(python_path: Path | str, cwd: Path) -> bool | None:
@@ -123,6 +132,9 @@ def build_workspace_runtime_env(
     workspace_env = (workspace_root / ".env").resolve()
     if not env.get("ABEL_AUTH_ENV_FILE") and workspace_env.exists():
         env["ABEL_AUTH_ENV_FILE"] = str(workspace_env)
+    manifest = load_workspace_manifest(workspace_root)
+    cache_root = resolve_workspace_paths(workspace_root, manifest)["cache_root"].resolve()
+    env.setdefault("CAUSAL_EDGE_CACHE_ROOT", str(cache_root))
     return env
 
 

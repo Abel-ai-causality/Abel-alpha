@@ -9,7 +9,7 @@ from abel_alpha.edge_runtime import (
     probe_causal_edge_cli,
     probe_causal_edge_import,
     probe_edge_context_json,
-    probe_edge_discovery_json,
+    probe_edge_discovery_payload,
 )
 from abel_alpha.workspace import (
     find_workspace_root,
@@ -20,7 +20,7 @@ from abel_alpha.workspace import (
 )
 
 
-SUCCESS_STATUSES = {"ready", "ready_legacy_edge"}
+SUCCESS_STATUSES = {"ready"}
 
 
 def run_doctor(start: Path | None = None) -> dict[str, object]:
@@ -37,7 +37,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
-                "edge_discovery_json": "not_run",
+                "edge_discovery_payload": "not_run",
                 "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
@@ -57,7 +57,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "python_env": "not_run",
                 "causal_edge_import": "not_run",
                 "causal_edge_cli": "not_run",
-                "edge_discovery_json": "not_run",
+                "edge_discovery_payload": "not_run",
                 "edge_context_json": "not_run",
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
@@ -71,7 +71,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         "python_env": "pass" if python_path.exists() else "fail",
         "causal_edge_import": "not_run",
         "causal_edge_cli": "not_run",
-        "edge_discovery_json": "not_run",
+        "edge_discovery_payload": "not_run",
         "edge_context_json": "not_run",
         "auth": "not_run",
         "edge_login_fallback": "not_run",
@@ -110,8 +110,8 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     cli_check = probe_causal_edge_cli(python_path, root)
     checks["causal_edge_cli"] = "pass" if cli_check.get("ok") else "fail"
 
-    discovery_contract_ok = probe_edge_discovery_json(python_path, root)
-    checks["edge_discovery_json"] = "pass" if discovery_contract_ok else "fail"
+    discovery_contract_ok = probe_edge_discovery_payload(python_path, root)
+    checks["edge_discovery_payload"] = "pass" if discovery_contract_ok else "fail"
 
     context_contract_ok = probe_edge_context_json(python_path, root)
     checks["edge_context_json"] = "pass" if context_contract_ok else "fail"
@@ -122,20 +122,24 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     result["auth"] = auth_check
     result["auth_scope"] = classify_auth_scope(root, auth_check)
 
+    if discovery_contract_ok is not True or context_contract_ok is not True:
+        result.update(
+            {
+                "status": "edge_contract_missing",
+                "summary": (
+                    "Workspace Python can import Abel-edge, but the installed runtime is missing "
+                    "required alpha contracts such as structured discovery or `--context-json`."
+                ),
+                "next_step": "abel-alpha env init  # or install a newer Abel-edge into the workspace runtime",
+            }
+        )
+        return result
+
     if not auth_check.get("ok"):
         result.update(
             {
-                "status": (
-                    "auth_missing"
-                    if context_contract_ok
-                    else "auth_missing_legacy_edge"
-                ),
-                "summary": (
-                    "Workspace environment is ready, but Abel auth was not detected."
-                    if context_contract_ok
-                    else "Workspace environment is ready, but Abel auth is missing and the installed "
-                    "Abel-edge does not yet support the alpha context contract."
-                ),
+                "status": "auth_missing",
+                "summary": "Workspace environment is ready, but Abel auth was not detected.",
                 "next_step": (
                     "Install causal-abel and complete OAuth, or run "
                     f"`{python_path} -m causal_edge.cli login --json --no-browser`"
@@ -144,28 +148,13 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         )
         return result
 
-    if context_contract_ok:
-        result.update(
-            {
-                "status": "ready",
-                "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
-                "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
-            }
-        )
-    else:
-        result.update(
-            {
-                "status": "ready_legacy_edge",
-                "summary": (
-                    "Workspace is usable, but the installed Abel-edge is missing one or more "
-                    "newer CLI/runtime contracts such as `discover --json` or the alpha context contract."
-                ),
-                "next_step": (
-                    "You can continue with `abel-alpha init-session`, but upgrade Abel-edge before "
-                    "depending on full structured discovery or the injected research engine context."
-                ),
-            }
-        )
+    result.update(
+        {
+            "status": "ready",
+            "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
+            "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
+        }
+    )
     return result
 
 

@@ -48,7 +48,7 @@ def resolve_workspace_paths(root: Path, manifest: dict | None = None) -> dict[st
     return {
         "research_root": root / str(paths.get("research_root", "research")),
         "docs_root": root / str(paths.get("docs_root", "docs")),
-        "cache_root": root / str(paths.get("cache_root", "cache")),
+        "cache_root": root / str(paths.get("cache_root", "cache/market_data")),
         "logs_root": root / str(paths.get("logs_root", "logs")),
         "venv": root / str(paths.get("venv", ".venv")),
     }
@@ -112,7 +112,7 @@ def build_default_manifest(name: str) -> dict:
         "paths": {
             "research_root": "research",
             "docs_root": "docs",
-            "cache_root": "cache",
+            "cache_root": "cache/market_data",
             "logs_root": "logs",
             "venv": ".venv",
         },
@@ -176,30 +176,28 @@ def render_workspace_readme(name: str) -> str:
 
 This is an Abel-alpha research workspace.
 
-## What this workspace is for
-
-- keep exploration sessions under `research/`
-- keep plans and iteration notes under `docs/`
-- keep disposable caches and logs under `cache/` and `logs/`
-- keep workspace defaults in `alpha.workspace.yaml`
-
-## Current first steps
+## Standard Flow
 
 ```bash
-abel-alpha workspace status
 abel-alpha env init
 abel-alpha doctor
 {default_activate_command()}
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
+abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
-`abel-alpha env init` prepares the local `.venv` and installs `Abel-alpha`
-plus `Abel-edge`. By default it installs `Abel-edge` from GitHub `main` until
-formal releases exist. If you want live Abel discovery, install `causal-abel`,
-complete its OAuth flow, then rerun `abel-alpha init-session --discover`.
-That live discovery path will also record edge-owned data readiness when the
-workspace runtime supports it.
+## Current Rules
+
+- session owns `discovery.json` and `readiness.json`
+- branch owns `branch.yaml`
+- edge owns the market-data cache
+- `prepare-branch` should run before a recorded round
+- session `backtest_start` is a default target; branch `requested_start` can override it explicitly
+
 If your environment cannot create a new venv, point alpha at an existing
 interpreter with `abel-alpha env init --runtime-python /path/to/python`.
 
@@ -209,11 +207,7 @@ Run `abel-alpha doctor` before opening a session.
 
 - `ready`: you can start research
 - `auth_missing`: complete `causal-abel` OAuth or use the standalone edge login fallback
-- `env_missing` or `edge_missing`: rerun `abel-alpha env init`
-
-If you intentionally point this workspace at an older custom `Abel-edge`,
-`doctor` may report `ready_legacy_edge`. That means the fallback path is active
-and newer structured contracts are not available in that runtime.
+- `env_missing`, `edge_missing`, or `edge_contract_missing`: rerun `abel-alpha env init`
 """
 
 
@@ -233,31 +227,31 @@ abel-alpha doctor
 ```bash
 abel-alpha env init
 abel-alpha doctor
-abel-alpha init-session --ticker TSLA --exp-id tsla-v1
+abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
+abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
 Run `doctor` before `init-session`. If it reports `auth_missing`, complete
 `causal-abel` OAuth or use the standalone edge login fallback first.
-Use `--discover` when you want live Abel discovery immediately; otherwise the
-session starts with a pending discovery placeholder that can be replaced later.
-If `causal-edge login` writes a token into the workspace `.env`, alpha-managed
-commands will reuse that file automatically.
-If `doctor` reports `ready_legacy_edge`, the workspace is using an older custom
-edge runtime and should be upgraded before depending on newer structured
-contracts.
+Treat `branch.yaml` as the branch definition and `prepare-branch` as the
+required pre-run input resolution step.
+Treat session readiness as advisory context; the branch's explicit
+`requested_start` is the runtime start when it is set.
 
 ### Run one research round
 ```bash
-abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
+abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
 ### Understand the workspace layout
 - `alpha.workspace.yaml` is the source of truth for workspace defaults
-- `research/` stores sessions, branches, notes, and evaluation outputs
+- `research/` stores sessions, branches, and evaluation outputs
 - `docs/` stores plans, summaries, and iteration records
-- `cache/` and `logs/` are disposable local runtime artifacts
+- `cache/market_data/` is the edge-owned shared cache root
 """
 
 
