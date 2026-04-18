@@ -46,6 +46,7 @@ EVENTS_HEADER = [
 
 DEFAULT_BACKTEST_START = "2020-01-01"
 SESSION_STATE_FILENAME = "session_state.json"
+BRANCH_STATE_FILENAME = "branch_state.json"
 
 RESULTS_HEADER = [
     "exp_id",
@@ -259,6 +260,13 @@ def main() -> int:
         help="Use the dense-overlap coverage hint from readiness",
     )
 
+    set_hypothesis = sub.add_parser(
+        "set-hypothesis",
+        help="Persist a branch-level hypothesis without recording a round",
+    )
+    set_hypothesis.add_argument("--branch", required=True)
+    set_hypothesis.add_argument("--text", required=True)
+
     init_branch = sub.add_parser("init-branch", help="Create a branch under a session")
     init_branch.add_argument("--session", required=True)
     init_branch.add_argument("--branch-id", required=True)
@@ -375,6 +383,39 @@ def main() -> int:
         print("")
         print("Next:")
         print(f"  abel-alpha status --session {session}")
+        return 0
+    if args.command == "set-hypothesis":
+        branch = resolve_workspace_arg_path(args.branch).resolve()
+        session = branch.parent.parent
+        hypothesis = str(args.text or "").strip()
+        if not has_explicit_hypothesis(hypothesis):
+            raise RuntimeError(
+                "Hypothesis text must include a real causal claim, not an empty placeholder."
+            )
+        with SessionLock(session):
+            persist_branch_hypothesis(branch, hypothesis, source="manual")
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "branch_hypothesis_updated",
+                    "branch_id": branch.name,
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": "Updated persistent branch hypothesis",
+                    "artifact_path": str((branch / BRANCH_STATE_FILENAME).relative_to(session)),
+                },
+            )
+            render_session(session)
+        print(f"Updated branch hypothesis for {branch}")
+        print(f"  hypothesis: {hypothesis}")
+        print("")
+        print("Next:")
+        print(f"  abel-alpha debug-branch --branch {branch}")
+        print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
     if args.command == "init-branch":
         session = resolve_workspace_arg_path(args.session)
@@ -871,6 +912,8 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         (branch / "rounds").mkdir(parents=True, exist_ok=True)
         (branch / "outputs").mkdir(parents=True, exist_ok=True)
         write_tsv_header(branch / "results.tsv", RESULTS_HEADER)
+        if not branch_state_path(branch).exists():
+            write_branch_state(branch, {})
         engine = branch / "engine.py"
         if not engine.exists():
             engine.write_text(
@@ -915,6 +958,11 @@ def run_branch_round(args: argparse.Namespace) -> int:
         return 2
     rows = read_tsv_rows(branch / "results.tsv")
     round_id = f"round-{len(rows) + 1:03d}"
+    effective_hypothesis, hypothesis_source = resolve_branch_hypothesis(
+        branch,
+        rows,
+        args.hypothesis,
+    )
     result_path = branch / "outputs" / f"{round_id}-edge-result.json"
     report_path = branch / "outputs" / f"{round_id}-edge-validation.md"
     handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
@@ -933,7 +981,11 @@ def run_branch_round(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
-    if warning and should_emit_readiness_warning(session, discovery):
+    emit_readiness_warning = False
+    if warning:
+        with SessionLock(session):
+            emit_readiness_warning = should_emit_readiness_warning(session, discovery)
+    if warning and emit_readiness_warning:
         print(
             f"Warning: {warning}",
             file=sys.stderr,
@@ -998,7 +1050,11 @@ def run_branch_round(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return completed.returncode or 1
-    if not has_explicit_hypothesis(args.hypothesis):
+    emit_missing_hypothesis_warning = False
+    if not has_explicit_hypothesis(effective_hypothesis):
+        with SessionLock(session):
+            emit_missing_hypothesis_warning = should_emit_missing_hypothesis_warning(branch)
+    if emit_missing_hypothesis_warning:
         print(
             "Warning: recording a round without an explicit hypothesis. "
             "State the causal claim, expected sign, and invalidation condition before the next round.",
@@ -1019,11 +1075,11 @@ def run_branch_round(args: argparse.Namespace) -> int:
             result=result,
             backtest_start=backtest_start,
             input_note=args.input_note,
-            hypothesis=args.hypothesis,
+            hypothesis=effective_hypothesis,
             expected_signal=args.expected_signal,
             summary=args.summary,
             next_step=args.next_step,
-            actions=args.action,
+            actions=args.action + [f"hypothesis_source={hypothesis_source}"],
             context_mode=context_mode,
             context_path=str(context_path.relative_to(session)),
             result_path=str(result_path.relative_to(session)),
@@ -1035,6 +1091,12 @@ def run_branch_round(args: argparse.Namespace) -> int:
 
     metrics = result.get("metrics", {})
     with SessionLock(session):
+        if has_explicit_hypothesis(effective_hypothesis):
+            persist_branch_hypothesis(
+                branch,
+                effective_hypothesis,
+                source=hypothesis_source,
+            )
         append_tsv_row(
             branch / "results.tsv",
             RESULTS_HEADER,
@@ -1205,6 +1267,7 @@ def print_status(session: Path) -> None:
         latest_note = (
             read_round_note(branch["branch_dir"], latest.get("round_id", "")) if latest else {}
         )
+        branch_hypothesis = current_branch_hypothesis(branch["branch_dir"], branch["rows"])
         keep_count = sum(1 for row in branch["rows"] if row.get("decision") == "keep")
         discard_count = sum(
             1 for row in branch["rows"] if row.get("decision") == "discard"
@@ -1215,7 +1278,7 @@ def print_status(session: Path) -> None:
             f"{latest.get('verdict', 'n/a')} {latest.get('score', '?/?')} "
             f"{latest_note.get('failure_signature', 'unknown')} "
             f"active={latest_note.get('signal_activity', 'n/a')} "
-            f"hypothesis={'yes' if has_explicit_hypothesis(latest_note.get('hypothesis', '')) else 'no'}"
+            f"hypothesis={'yes' if has_explicit_hypothesis(branch_hypothesis) else 'no'}"
         )
 
 
@@ -1490,6 +1553,7 @@ def build_branch_readme(branch: dict, latest_note: dict[str, str], exp_id: str) 
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
     keep_rows = [row for row in rows if row.get("decision") == "keep"]
+    branch_hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
     ledger = (
         "\n".join(
             f"1. `{row.get('round_id', '?')}` - {row.get('description', '?')} [{row.get('score', '?')}] {row.get('decision', '?')}"
@@ -1538,10 +1602,10 @@ See `thesis.md` for the branch hypothesis.
 
 ## Decision Rationale
 
-1. latest_hypothesis: `{latest_note.get("hypothesis", "not recorded")}`
+1. latest_hypothesis: `{branch_hypothesis or latest_note.get("hypothesis", "not recorded")}`
 1. latest_summary: `{latest_note.get("summary", latest.get("description", "not recorded"))}`
 1. latest_failures: `{latest_note.get("failures", "none")}`
-1. hypothesis_status: `{"explicit" if has_explicit_hypothesis(latest_note.get("hypothesis", "")) else "needs work"}`
+1. hypothesis_status: `{"explicit" if has_explicit_hypothesis(branch_hypothesis) else "needs work"}`
 
 ## Round Ledger
 
@@ -1605,7 +1669,7 @@ generated by Abel-alpha narrative layer
 def build_thesis(branch: dict, discovery: dict) -> str:
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
-    hypothesis = latest_recorded_hypothesis(branch)
+    hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
     latest_note = (
         read_round_note(branch["branch_dir"], latest.get("round_id", ""))
         if latest
@@ -1830,7 +1894,7 @@ def render_selection_narrative(branches: list[dict]) -> str:
         latest = branch["rows"][-1]
         note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
         reason = (
-            latest_recorded_hypothesis(branch)
+            current_branch_hypothesis(branch["branch_dir"], branch["rows"])
             or note.get("hypothesis")
             or latest.get("description", "No explicit hypothesis recorded yet.")
         )
@@ -1993,7 +2057,7 @@ def build_branch_snapshot_line(branch: dict) -> str:
     first = rows[0]
     note = read_round_note(branch["branch_dir"], latest.get("round_id", ""))
     reason = (
-        latest_recorded_hypothesis(branch)
+        current_branch_hypothesis(branch["branch_dir"], rows)
         or note.get("failures")
         or latest.get("description", "")
     )
@@ -2047,11 +2111,11 @@ def session_next_step(session: Path, branches: list[dict], discovery: dict) -> s
             return guidance + suffix
         return guidance
     if leader and leader["rows"]:
-        note = read_round_note(leader["branch_dir"], leader["rows"][-1].get("round_id", ""))
-        if not has_explicit_hypothesis(note.get("hypothesis", "")):
+        branch_hypothesis = current_branch_hypothesis(leader["branch_dir"], leader["rows"])
+        if not has_explicit_hypothesis(branch_hypothesis):
             return (
-                f"Before the next round, tighten `{leader['branch_id']}` by writing an explicit hypothesis "
-                "with a causal claim, expected sign, and invalidation condition."
+                f"Before the next round, persist an explicit hypothesis for `{leader['branch_id']}` with "
+                f"`abel-alpha set-hypothesis --branch {leader['branch_dir']} --text \"...\"`, then validate the next causal claim."
             )
         if has_historical_keep:
             return (
@@ -2112,6 +2176,24 @@ def load_discovery(session: Path) -> dict:
             "K_discovery": 0,
         }
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def branch_state_path(branch: Path) -> Path:
+    return branch / BRANCH_STATE_FILENAME
+
+
+def load_branch_state(branch: Path) -> dict:
+    path = branch_state_path(branch)
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_branch_state(branch: Path, payload: dict) -> None:
+    branch_state_path(branch).write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def session_state_path(session: Path) -> Path:
@@ -2255,6 +2337,50 @@ def update_backtest_start(*, session: Path, backtest_start: str, source: str) ->
             )
         render_session(session)
     return updated
+
+
+def current_branch_hypothesis(branch_dir: Path, rows: list[dict[str, str]] | None = None) -> str:
+    state = load_branch_state(branch_dir)
+    hypothesis = str(state.get("hypothesis") or "").strip()
+    if has_explicit_hypothesis(hypothesis):
+        return hypothesis
+    if rows is None:
+        rows = read_tsv_rows(branch_dir / "results.tsv")
+    return latest_recorded_hypothesis({"branch_dir": branch_dir, "rows": rows})
+
+
+def should_emit_missing_hypothesis_warning(branch: Path) -> bool:
+    if has_explicit_hypothesis(current_branch_hypothesis(branch)):
+        return False
+    state = load_branch_state(branch)
+    if state.get("missing_hypothesis_warning_emitted"):
+        return False
+    state["missing_hypothesis_warning_emitted"] = True
+    write_branch_state(branch, state)
+    return True
+
+
+def persist_branch_hypothesis(branch: Path, hypothesis: str, *, source: str) -> None:
+    state = load_branch_state(branch)
+    state["hypothesis"] = hypothesis
+    state["hypothesis_source"] = source
+    state["hypothesis_updated_at"] = _now()
+    state["missing_hypothesis_warning_emitted"] = False
+    write_branch_state(branch, state)
+
+
+def resolve_branch_hypothesis(
+    branch: Path,
+    rows: list[dict[str, str]],
+    explicit_hypothesis: str,
+) -> tuple[str, str]:
+    hypothesis = str(explicit_hypothesis or "").strip()
+    if has_explicit_hypothesis(hypothesis):
+        return hypothesis, "round_argument"
+    stored = current_branch_hypothesis(branch, rows)
+    if has_explicit_hypothesis(stored):
+        return stored, "branch_state"
+    return "", "missing"
 
 
 def render_default_engine_template(discovery: dict, session: Path) -> str:

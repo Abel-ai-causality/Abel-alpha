@@ -14,7 +14,9 @@ abel-alpha workspace status
 abel-alpha env init
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover --backtest-start 2020-01-01
+abel-alpha set-backtest-start --session research/tsla/tsla-v1 --target-safe
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+abel-alpha set-hypothesis --branch research/tsla/tsla-v1/branches/graph-v1 --text "Parent liquidity expansion should lead TSLA higher over the next 5 sessions; invalidate if the edge flips negative after lagging the driver."
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha status --session research/tsla/tsla-v1
@@ -75,8 +77,10 @@ When you use `causal-edge login` inside a workspace, alpha-managed runs now
 export that workspace `.env` through `ABEL_AUTH_ENV_FILE` so session and branch
 subprocesses resolve the same auth file deterministically.
 
-Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. On a modern `Abel-edge` runtime, alpha also runs edge-owned data verification immediately after discovery and records which tickers have full-window, partial-window, missing, or broken history. `init-session` fixes the session-level backtest start date, and `run-branch` passes that `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
+Use `init-session --discover` when you want the live Abel parent/blanket discovery written into `discovery.json` and the session event log from the start, so the narrative layer records discovery as part of the experiment trail instead of leaving it `pending`. On a modern `Abel-edge` runtime, alpha also runs edge-owned data verification immediately after discovery and records which tickers have full-window, partial-window, missing, or broken history. `init-session` fixes the initial session-level backtest start date, and `abel-alpha set-backtest-start` lets you later move that start explicitly to an exact date, the target-safe hint, or the denser coverage hint after reviewing readiness. `run-branch` passes the current session `start` through to `causal-edge evaluate` while leaving `end` unset so each run uses the latest available data.
 Without `--discover`, `init-session` still creates the session immediately but writes a pending discovery placeholder instead of running live Abel discovery.
+
+Branch hypotheses are now persistent branch state rather than throwaway per-round CLI text. You can seed or refine that state with `abel-alpha set-hypothesis --branch ... --text "..."`, and later rounds reuse the latest explicit hypothesis automatically until you change it.
 
 Each `run-branch` now writes `outputs/<round-id>-alpha-context.json` and passes it to `causal-edge evaluate --context-json`. Research engine code should prefer the injected `self.context` object, especially `self.context["discovery"]` and `self.context["discovery_path"]`, instead of assuming a relative workspace layout.
 If you intentionally use an older custom `Abel-edge` that does not support `--context-json`, Abel-alpha still records the alpha context artifact, but the research engine will not receive it until edge is upgraded. `abel-alpha doctor` reports that capability explicitly.
