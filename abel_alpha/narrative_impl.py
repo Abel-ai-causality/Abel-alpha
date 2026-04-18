@@ -17,6 +17,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
 from abel_alpha.edge_runtime import build_workspace_runtime_env
 from abel_alpha.env import init_workspace_env
@@ -48,6 +50,8 @@ DEFAULT_BACKTEST_START = "2020-01-01"
 SESSION_STATE_FILENAME = "session_state.json"
 BRANCH_STATE_FILENAME = "branch_state.json"
 READINESS_FILENAME = "readiness.json"
+BRANCH_SPEC_FILENAME = "branch.yaml"
+DEPENDENCIES_FILENAME = "dependencies.json"
 
 RESULTS_HEADER = [
     "exp_id",
@@ -73,13 +77,17 @@ RESULTS_HEADER = [
 
 ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
 
-Default backtest behavior should use the requested start date from self.context["_research"]["requested_window"].
-If provided, self.context contains workspace/session/branch/discovery metadata from Abel-alpha.
-Prefer StrategyEngine research helpers over hard-coded discovery parsing:
+Default backtest behavior should follow branch.yaml first and the injected context second.
+If provided, self.context contains workspace/session/branch/discovery/readiness metadata from Abel-alpha.
+Use branch.yaml to make the critical research choices explicit:
+  - target
+  - requested_start
+  - selected_drivers
+  - overlap_mode
+Then use StrategyEngine research helpers as thin readers/executors:
   - self.research_target_ticker()
   - self.research_requested_start()
-  - self.research_driver_tickers(require_usable=True, require_full_window=False)
-  - self.research_driver_candidates(...)
+  - self.research_driver_tickers()
   - self.load_research_bars(...)
   - self.research_close_frame(...)
   - self.research_target_driver_frame(overlap="target_only")
@@ -100,25 +108,20 @@ class BranchEngine(StrategyEngine):
     def compute_signals(self):
         target = self.research_target_ticker() or "{ticker}"
         start = self.research_requested_start() or "2020-01-01"
-        ready_drivers = self.research_driver_tickers(
-            require_usable=True,
-            require_full_window=False,
-        )
+        branch_spec = (self.context or {{}}).get("branch_spec") or {{}}
+        selected_drivers = branch_spec.get("selected_drivers") or self.research_driver_tickers()
         # Example paved-road research flow:
         # bars = self.load_research_bars(
-        #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=False,
+        #     driver_tickers=selected_drivers,
         #     limit=600,
         # )
         # close_frame = self.research_close_frame(
-        #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=False,
+        #     driver_tickers=selected_drivers,
         #     limit=600,
         # )
         # target_close, driver_frame = self.research_target_driver_frame(
-        #     driver_tickers=ready_drivers[:3],
-        #     require_full_window=False,
-        #     overlap="target_only",
+        #     driver_tickers=selected_drivers,
+        #     overlap=branch_spec.get("overlap_mode") or "target_only",
         #     require_drivers=True,
         #     limit=600,
         # )
@@ -131,9 +134,10 @@ class BranchEngine(StrategyEngine):
         raise NotImplementedError(
             "This branch is still using the default Abel-alpha scaffold. "
             "Replace the stub in engine.py before recording a real round. "
-            f"requested_start={{start}}; target={{target}}; ready_drivers={{len(ready_drivers)}}; "
+            f"requested_start={{start}}; target={{target}}; selected_drivers={{len(selected_drivers)}}; "
             f"target_safe_start={{target_start or 'n/a'}}; "
             f"dense_overlap_hint={{common_start or 'n/a'}}. "
+            "Edit branch.yaml first if the default driver selection is not what this branch needs. "
             "Use `abel-alpha debug-branch` while wiring data helpers if you want a quick dry run."
         )
 
@@ -426,6 +430,7 @@ def main() -> int:
         readiness = load_readiness(session)
         branch = init_branch_dir(session, args.branch_id)
         print(f"Created Abel-alpha branch at {branch}")
+        print(f"  branch_spec: {branch / BRANCH_SPEC_FILENAME}")
         print(f"  engine: {branch / 'engine.py'}")
         print(f"  rounds: {branch / 'rounds'}")
         print(f"  outputs: {branch / 'outputs'}")
@@ -436,13 +441,15 @@ def main() -> int:
             print(f"  warning: {warning}")
             for line in readiness_recommendation_lines(readiness):
                 print(f"  coverage_hint: {line}")
-            print("")
+        print("")
         print("Reminders:")
+        print("  Confirm branch.yaml before wiring engine.py so target/start/drivers stay explicit.")
         print("  If you fetch bars, pass an explicit `limit=...`.")
         print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
         print("  Replace the default scaffold stub before recording the first real round.")
         print("")
         print("Next:")
+        print(f"  edit {branch / BRANCH_SPEC_FILENAME}")
         print(f"  edit {branch / 'engine.py'}")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
@@ -810,6 +817,15 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         write_tsv_header(branch / "results.tsv", RESULTS_HEADER)
         if not branch_state_path(branch).exists():
             write_branch_state(branch, {})
+        if not branch_spec_path(branch).exists():
+            write_branch_spec(
+                branch,
+                build_default_branch_spec(
+                    branch=branch,
+                    discovery=discovery,
+                    readiness=readiness,
+                ),
+            )
         engine = branch / "engine.py"
         if not engine.exists():
             engine.write_text(
@@ -1476,7 +1492,7 @@ generated by Abel-alpha narrative layer
 
 ## Branch Thesis
 
-See `thesis.md` for the branch hypothesis.
+See `branch.yaml` for the explicit branch inputs and `thesis.md` for the branch hypothesis.
 
 ## Latest Conclusion
 
@@ -1569,6 +1585,7 @@ def build_thesis(branch: dict, discovery: dict, readiness: dict) -> str:
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
     hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
+    branch_spec = load_branch_spec(branch["branch_dir"])
     latest_note = (
         read_round_note(branch["branch_dir"], latest.get("round_id", ""))
         if latest
@@ -1578,6 +1595,7 @@ def build_thesis(branch: dict, discovery: dict, readiness: dict) -> str:
     blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
     usable = format_simple_nodes(readiness_usable_tickers(readiness), limit=8)
     start_covered = format_simple_nodes(readiness_start_covered_tickers(readiness), limit=8)
+    selected = format_simple_nodes(branch_spec.get("selected_drivers") or [], limit=8)
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -1599,6 +1617,7 @@ Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.g
 - discovery_source: `{discovery.get("source", "unknown")}`
 - direct_parents: `{parents}`
 - blanket_candidates: `{blanket}`
+- selected_drivers: `{selected}`
 - usable_tickers: `{usable}`
 - start_covered_tickers: `{start_covered}`
 
@@ -1919,6 +1938,7 @@ def build_branch_context(
 ) -> dict:
     """Build the structured context passed into causal-edge evaluate."""
     workspace_root = find_workspace_root(branch)
+    branch_spec = load_branch_spec(branch)
     return {
         "schema_version": 1,
         "workspace_root": str(workspace_root) if workspace_root is not None else None,
@@ -1928,10 +1948,12 @@ def build_branch_context(
         "session_dir": str(session.resolve()),
         "branch_dir": str(branch.resolve()),
         "outputs_dir": str((branch / "outputs").resolve()),
+        "branch_spec_path": str(branch_spec_path(branch).resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
         "readiness_path": str((session / READINESS_FILENAME).resolve()),
         "ticker": discovery.get("ticker", session.parent.name.upper()),
         "backtest_start": backtest_start,
+        "branch_spec": branch_spec,
         "discovery": discovery,
         "readiness": readiness,
     }
@@ -2011,8 +2033,8 @@ def session_next_step(
         warning = build_readiness_warning(readiness)
         recommendations = ", ".join(readiness_recommendation_lines(readiness))
         guidance = (
-            f"Edit `{branch['branch_id']}` and use `abel-alpha debug-branch --branch {branch['branch_dir']}` "
-            "to wire the first real signal before recording a round."
+            f"Confirm `{branch['branch_id']}/branch.yaml`, then use "
+            f"`abel-alpha debug-branch --branch {branch['branch_dir']}` to wire the first real signal before recording a round."
         )
         if warning:
             suffix = (
@@ -2097,6 +2119,72 @@ def load_readiness(session: Path) -> dict:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def branch_spec_path(branch: Path) -> Path:
+    return branch / BRANCH_SPEC_FILENAME
+
+
+def dependencies_path(branch: Path) -> Path:
+    return branch / "inputs" / DEPENDENCIES_FILENAME
+
+
+def load_branch_spec(branch: Path) -> dict:
+    path = branch_spec_path(branch)
+    if not path.exists():
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_branch_spec(branch: Path, payload: dict) -> None:
+    branch_spec_path(branch).write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=False),
+        encoding="utf-8",
+    )
+
+
+def discovery_candidate_tickers(discovery: dict) -> list[str]:
+    target = str(discovery.get("ticker") or "").strip().upper()
+    ordered: list[str] = []
+    for section in ("parents", "blanket_new", "children"):
+        for item in discovery.get(section) or []:
+            if isinstance(item, dict):
+                ticker = str(item.get("ticker") or "").strip().upper()
+            else:
+                ticker = str(item or "").strip().upper()
+            if not ticker or ticker == target or ticker in ordered:
+                continue
+            ordered.append(ticker)
+    return ordered
+
+
+def suggest_branch_drivers(discovery: dict, readiness: dict, *, limit: int = 5) -> list[str]:
+    discovered = discovery_candidate_tickers(discovery)
+    usable = set(readiness_usable_tickers(readiness))
+    prioritized = [ticker for ticker in discovered if ticker in usable]
+    fallback = [ticker for ticker in discovered if ticker not in usable]
+    return (prioritized + fallback)[:limit]
+
+
+def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict) -> dict:
+    suggested = suggest_branch_drivers(discovery, readiness, limit=5)
+    selected = suggested[: min(3, len(suggested))]
+    return {
+        "version": 1,
+        "branch_id": branch.name,
+        "target": discovery.get("ticker", branch.parent.parent.parent.name.upper()),
+        "hypothesis": "",
+        "requested_start": _get_backtest_start(discovery),
+        "resolved_start_policy": "requested",
+        "overlap_mode": "target_only",
+        "selected_drivers": selected,
+        "suggested_drivers": suggested,
+        "data_requirements": {
+            "timeframe": "1d",
+            "fields": ["close"],
+        },
+    }
 
 
 def branch_state_path(branch: Path) -> Path:
