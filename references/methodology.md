@@ -5,6 +5,8 @@ See `causal-edge docs/why-causal.md` for the full derivation (Pearl, DGP, regime
 
 This file covers only what causal-edge doesn't: the axiom/constraint distinction
 and production proofs specific to the research loop.
+For the current branch-first operating flow, read `experiment-loop.md` and
+`discovery-protocol.md` first; this file explains the research logic behind them.
 
 ## Axioms (math — cannot be wrong)
 
