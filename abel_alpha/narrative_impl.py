@@ -977,12 +977,27 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     return completed.returncode
 
 
+def branch_requested_start(branch: Path, discovery: dict) -> str:
+    branch_spec = load_branch_spec(branch)
+    requested = str(branch_spec.get("requested_start") or "").strip()
+    if requested:
+        return requested
+    return _get_backtest_start(discovery)
+
+
 def run_branch_round(args: argparse.Namespace) -> int:
     branch = resolve_workspace_arg_path(args.branch).resolve()
     session = branch.parent.parent
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
     readiness = load_readiness(session)
+    if not dependencies_path(branch).exists():
+        print(
+            "Branch inputs have not been prepared yet. "
+            "Run `abel-alpha prepare-branch --branch ...` before recording a round.",
+            file=sys.stderr,
+        )
+        return 2
     warning = build_readiness_warning(readiness)
     if branch_uses_default_scaffold(branch, discovery, readiness, session) and not args.allow_untouched_template:
         print(
@@ -1006,7 +1021,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     report_path = branch / "outputs" / f"{round_id}-edge-validation.md"
     handoff_path = branch / "outputs" / f"{round_id}-edge-handoff.json"
     context_path = branch / "outputs" / f"{round_id}-alpha-context.json"
-    backtest_start = _get_backtest_start(discovery)
+    backtest_start = branch_requested_start(branch, discovery)
     context_path.write_text(
         json.dumps(
             build_branch_context(
@@ -1188,7 +1203,7 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     discovery = load_discovery(session)
     readiness = load_readiness(session)
     workspace_root = find_workspace_root(branch)
-    backtest_start = _get_backtest_start(discovery)
+    backtest_start = branch_requested_start(branch, discovery)
     context_path = branch / "outputs" / "debug-alpha-context.json"
     debug_result_path = branch / "outputs" / "debug-edge-result.json"
     context_path.parent.mkdir(parents=True, exist_ok=True)
