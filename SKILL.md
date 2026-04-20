@@ -27,6 +27,10 @@ For normal use, think in terms of one workspace and one canonical runtime:
 - canonical runtime: `<workspace>/.venv`
 - repeated use should reuse the existing workspace before creating another one
 
+When you bootstrap from an `Abel-alpha` source checkout, the checkout `.venv`
+is only an installer environment for that checkout. After `abel-alpha env init`,
+the workspace `.venv` becomes the canonical runtime for daily work.
+
 Do not improvise:
 
 - environment setup
@@ -54,7 +58,7 @@ LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
 # Current source-checkout flow:
-# install the abel-alpha CLI from the alpha source checkout or the installed skill directory
+# create an installer environment for the alpha checkout or installed skill copy
 python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
@@ -67,8 +71,8 @@ cd "$WORKSPACE_PATH"
 abel-alpha env init
 abel-alpha doctor
 
-# if auth is missing, first try to reuse any existing causal-abel auth
-# otherwise complete causal-abel OAuth once or use the standalone edge login fallback
+# before starting a new login, first try to reuse any existing causal-abel auth
+# if no reusable auth is available, complete causal-abel OAuth once or use the standalone edge login fallback
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 
@@ -84,8 +88,7 @@ abel-alpha status --session research/<ticker>/<exp-id>
 
 `pip install -e .` belongs to the Abel-alpha source checkout or the locally
 installed skill copy. `abel-alpha env init` prepares the workspace runtime and
-installs `causal-edge` there. After that step, the workspace `.venv` is the
-canonical runtime for daily work inside that workspace.
+installs `causal-edge` there.
 
 When you reuse an existing workspace, tell the user explicitly. Good examples:
 

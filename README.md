@@ -15,6 +15,11 @@ For normal use, think in terms of one workspace and one runtime:
 - canonical runtime: `<workspace>/.venv`
 - default behavior on repeat entry: reuse the existing workspace before creating another one
 
+When you are bootstrapping from an `Abel-alpha` source checkout, the checkout
+`.venv` is only the installer environment for that checkout. After
+`abel-alpha env init`, use the workspace `.venv` as the canonical runtime for
+daily research work.
+
 ## Standard Flow
 
 ```bash
@@ -22,7 +27,7 @@ LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
 # Current source-checkout flow:
-# install abel-alpha from this checkout, then create the workspace explicitly
+# create a temporary installer environment for this checkout, then create the workspace explicitly
 python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
@@ -34,8 +39,8 @@ cd "$WORKSPACE_PATH"
 abel-alpha env init
 abel-alpha doctor
 
-# if auth is missing, first reuse any available causal-abel auth
-# otherwise complete causal-abel OAuth once or use the standalone edge login fallback
+# before starting a new login, first try to reuse existing causal-abel auth
+# if no reusable auth is available, complete causal-abel OAuth once or use the standalone edge login fallback
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 
@@ -89,11 +94,12 @@ strategy scaffold.
 2. Derive the target workspace from the launch root and pass an explicit `--path`.
 3. Reuse an existing workspace before creating a new one.
 4. Use the fixed default workspace name `abel-alpha-workspace` unless the user asks for something else.
-5. Edit `branch.yaml` before trying to wire `engine.py`.
-6. Run `prepare-branch` before a recorded round.
-7. Treat readiness as advisory, not as a hard branch filter.
-8. Prefer injected context over hard-coded file paths.
-9. Let `branch.yaml.requested_start` override the session default when the branch needs a narrower window.
+5. Tell the user explicitly when you are reusing an existing workspace.
+6. Edit `branch.yaml` before trying to wire `engine.py`.
+7. Run `prepare-branch` before a recorded round.
+8. Treat readiness as advisory, not as a hard branch filter.
+9. Prefer injected context over hard-coded file paths.
+10. Let `branch.yaml.requested_start` override the session default when the branch needs a narrower window.
 
 ## Auth
 

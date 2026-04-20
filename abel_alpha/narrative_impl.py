@@ -513,12 +513,15 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print(f"  manifest: {root / 'alpha.workspace.yaml'}")
         print(f"  research: {resolved['research_root']}")
         print(f"  docs: {resolved['docs_root']}")
-        print(f"  canonical_python: {resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}")
+        print(
+            "  planned_workspace_python: "
+            f"{resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}"
+        )
         print("")
         print("Next:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
-        print("  abel-alpha env init")
+        print("  abel-alpha env init  # create the workspace runtime")
         print("  abel-alpha doctor")
         return 0
     if args.workspace_command == "status":
@@ -555,9 +558,9 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
     print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
-    print("  runtime_note: use this workspace runtime as the canonical environment for daily research work")
+    print("  canonical_runtime_note: use this workspace runtime as the canonical environment for daily research work")
     if result.runtime_mode == "existing_python":
-        print("  runtime_note: using an existing interpreter instead of creating the workspace .venv")
+        print("  runtime_override_note: using an existing interpreter instead of creating the workspace .venv")
     if result.edge_discovery_payload_capable is not None:
         print(f"  edge_discovery_payload: {'yes' if result.edge_discovery_payload_capable else 'no'}")
     if result.edge_context_json_capable is not None:

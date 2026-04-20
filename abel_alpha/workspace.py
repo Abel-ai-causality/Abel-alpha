@@ -176,7 +176,8 @@ def render_workspace_readme(name: str) -> str:
 
 This is an Abel-alpha research workspace.
 
-For normal use, treat this workspace's `.venv` as the canonical runtime.
+This file describes how to work inside an existing workspace.
+Treat this workspace's `.venv` as the canonical runtime for daily research.
 
 ## Standard Flow
 
@@ -214,7 +215,7 @@ interpreter with `abel-alpha env init --runtime-python /path/to/python`.
 Run `abel-alpha doctor` before opening a session.
 
 - `ready`: you can start research
-- `auth_missing`: complete `causal-abel` OAuth or use the standalone edge login fallback
+- `auth_missing`: first reuse any available `causal-abel` auth, otherwise complete `causal-abel` OAuth or use the standalone edge login fallback
 - `env_missing`, `edge_missing`, or `edge_contract_missing`: rerun `abel-alpha env init`
 """
 
@@ -242,7 +243,8 @@ abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
 Run `doctor` before `init-session`. If it reports `auth_missing`, complete
-`causal-abel` OAuth or use the standalone edge login fallback first.
+any reusable `causal-abel` auth first, otherwise complete `causal-abel` OAuth
+or use the standalone edge login fallback.
 Treat `branch.yaml` as the branch definition and `prepare-branch` as the
 required pre-run input resolution step.
 Treat session readiness as advisory context; the branch's explicit
