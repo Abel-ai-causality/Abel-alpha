@@ -513,6 +513,7 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print(f"  manifest: {root / 'alpha.workspace.yaml'}")
         print(f"  research: {resolved['research_root']}")
         print(f"  docs: {resolved['docs_root']}")
+        print(f"  canonical_python: {resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}")
         print("")
         print("Next:")
         print(f"  cd {root}")
@@ -554,6 +555,7 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
     print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
+    print("  runtime_note: use this workspace runtime as the canonical environment for daily research work")
     if result.runtime_mode == "existing_python":
         print("  runtime_note: using an existing interpreter instead of creating the workspace .venv")
     if result.edge_discovery_payload_capable is not None:

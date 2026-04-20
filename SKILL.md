@@ -21,10 +21,11 @@ Use `Abel-alpha` as a workspace-first research CLI.
 The point is not to make the workspace feel clever. The point is to help an
 agent converge on a tradable mechanism with fewer wasted rounds.
 
-There are two layers of environment:
+For normal use, think in terms of one workspace and one canonical runtime:
 
-- a bootstrap environment where `abel-alpha` itself is installed
-- the workspace runtime that `abel-alpha env init` prepares for research runs
+- default workspace name: `abel-alpha-workspace`
+- canonical runtime: `<workspace>/.venv`
+- repeated use should reuse the existing workspace before creating another one
 
 Do not improvise:
 
@@ -33,23 +34,41 @@ Do not improvise:
 - branch artifact locations
 - runtime data loading paths
 
+When an agent is launched, treat the agent launch working directory root as the
+anchor point for workspace behavior.
+
+Use this workspace resolution order:
+
+1. if the current directory is already an Abel-alpha workspace, continue there
+2. else if `<launch-root>/abel-alpha-workspace` exists, reuse it
+3. else create `<launch-root>/abel-alpha-workspace`
+
+Do not invent a new workspace name unless the user asked for one explicitly.
+Do not silently pick a path from an internal cwd guess. Use the launch root and
+an explicit `--path`.
+
 Use this default flow:
 
 ```bash
-# first: install the abel-alpha CLI from the alpha source checkout or the installed skill directory
+LAUNCH_ROOT="$PWD"
+WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+
+# Current source-checkout flow:
+# install the abel-alpha CLI from the alpha source checkout or the installed skill directory
 python -m venv .venv
 # PowerShell: .venv\Scripts\Activate.ps1
 # bash/zsh: source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -e .
 
-# then: create a workspace and let alpha prepare that workspace runtime
-abel-alpha workspace init my-lab
-cd my-lab
+# then: create a workspace at an explicit path and prepare its runtime
+abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"
+cd "$WORKSPACE_PATH"
 abel-alpha env init
 abel-alpha doctor
 
-# if auth is missing, install causal-abel and finish OAuth once
+# if auth is missing, first try to reuse any existing causal-abel auth
+# otherwise complete causal-abel OAuth once or use the standalone edge login fallback
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
 
@@ -64,8 +83,17 @@ abel-alpha status --session research/<ticker>/<exp-id>
 ```
 
 `pip install -e .` belongs to the Abel-alpha source checkout or the locally
-installed skill copy. `abel-alpha env init` is the step that prepares the
-workspace's own research runtime and installs `causal-edge` there.
+installed skill copy. `abel-alpha env init` prepares the workspace runtime and
+installs `causal-edge` there. After that step, the workspace `.venv` is the
+canonical runtime for daily work inside that workspace.
+
+When you reuse an existing workspace, tell the user explicitly. Good examples:
+
+- "Found existing workspace at `/path/to/abel-alpha-workspace`; I will continue there."
+- "Current directory is already an Abel workspace; I will continue here."
+
+When auth is needed and an authorization URL appears, tell the user
+immediately. Do not silently wait in the terminal without surfacing the URL.
 
 Current framework rules:
 

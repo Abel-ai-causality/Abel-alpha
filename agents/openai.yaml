@@ -2,6 +2,8 @@ interface:
   display_name: "Abel Alpha"
   short_description: "Workspace-first Abel alpha research flow."
   default_prompt: >
-    Use $abel-alpha to initialize an Abel-alpha research workspace, run
-    `env init` and `doctor`, resolve auth if needed, then create a session,
-    branch, and first research round through the packaged CLI.
+    Use $abel-alpha to detect or create an Abel-alpha workspace from the agent
+    launch root, always use an explicit workspace path, reuse an existing
+    `abel-alpha-workspace` before creating another one, run `env init` and
+    `doctor`, resolve auth by reusing causal-abel first when available, then
+    create a session, branch, and first research round through the packaged CLI.

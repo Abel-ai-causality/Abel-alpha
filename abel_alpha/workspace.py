@@ -176,6 +176,8 @@ def render_workspace_readme(name: str) -> str:
 
 This is an Abel-alpha research workspace.
 
+For normal use, treat this workspace's `.venv` as the canonical runtime.
+
 ## Standard Flow
 
 ```bash
@@ -189,6 +191,12 @@ abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
+
+## Re-entry
+
+- if you open this workspace root again later, continue here
+- if you open the parent launch directory later, reuse its child `abel-alpha-workspace` before creating another one
+- do not create a second workspace in the same area unless you want one intentionally
 
 ## Current Rules
 
@@ -239,6 +247,7 @@ Treat `branch.yaml` as the branch definition and `prepare-branch` as the
 required pre-run input resolution step.
 Treat session readiness as advisory context; the branch's explicit
 `requested_start` is the runtime start when it is set.
+Treat this workspace `.venv` as the canonical runtime for daily work.
 
 ### Run one research round
 ```bash
@@ -252,6 +261,10 @@ abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 - `research/` stores sessions, branches, and evaluation outputs
 - `docs/` stores plans, summaries, and iteration records
 - `cache/market_data/` is the edge-owned shared cache root
+
+### Re-enter this workspace later
+- if you are already in this workspace root, continue here directly
+- if you are in the parent launch directory, reuse its `abel-alpha-workspace` child before creating another one
 """
 
 
