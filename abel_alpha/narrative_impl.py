@@ -53,6 +53,15 @@ BRANCH_STATE_FILENAME = "branch_state.json"
 READINESS_FILENAME = "readiness.json"
 BRANCH_SPEC_FILENAME = "branch.yaml"
 DEPENDENCIES_FILENAME = "dependencies.json"
+MEMORY_MANIFEST_FILENAME = "manifest.json"
+MEMORY_BRANCHES_FILENAME = "branches.tsv"
+MEMORY_ROUNDS_FILENAME = "rounds.tsv"
+MEMORY_VALIDATIONS_FILENAME = "validations.tsv"
+MEMORY_INSIGHTS_FILENAME = "insights.tsv"
+MEMORY_LINKS_FILENAME = "links.tsv"
+MEMORY_VIEWS_DIRNAME = "views"
+MEMORY_OVERVIEW_FILENAME = "overview.md"
+MEMORY_COMPARE_FILENAME = "compare.md"
 
 RESULTS_HEADER = [
     "exp_id",
@@ -74,6 +83,76 @@ RESULTS_HEADER = [
     "result_path",
     "report_path",
     "handoff_path",
+]
+
+MEMORY_BRANCHES_HEADER = [
+    "branch_id",
+    "asset_scope",
+    "exp_id",
+    "method_family",
+    "source_type",
+    "parent_branch_id",
+    "status",
+    "latest_round_id",
+    "best_round_id",
+    "best_validation_id",
+    "thesis_short",
+    "created_at",
+]
+
+MEMORY_ROUNDS_HEADER = [
+    "round_id",
+    "branch_id",
+    "stage",
+    "started_at",
+    "ended_at",
+    "trigger",
+    "hypothesis",
+    "change_summary",
+    "action_summary",
+    "decision",
+    "next_step",
+    "time_spent_min",
+]
+
+MEMORY_VALIDATIONS_HEADER = [
+    "validation_id",
+    "branch_id",
+    "round_id",
+    "engine",
+    "verdict",
+    "score",
+    "sharpe",
+    "lo_adj",
+    "omega",
+    "total_return",
+    "max_dd",
+    "result_ref",
+    "report_ref",
+]
+
+MEMORY_INSIGHTS_HEADER = [
+    "insight_id",
+    "scope",
+    "branch_id",
+    "round_id",
+    "kind",
+    "statement",
+    "reusable_rule",
+    "confidence",
+    "origin",
+]
+
+MEMORY_LINKS_HEADER = [
+    "link_id",
+    "from_branch_id",
+    "to_branch_id",
+    "link_type",
+    "match_score",
+    "match_basis",
+    "status",
+    "note",
+    "origin",
 ]
 
 ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
@@ -272,6 +351,56 @@ def main() -> int:
     set_hypothesis.add_argument("--branch", required=True)
     set_hypothesis.add_argument("--text", required=True)
 
+    add_insight = sub.add_parser(
+        "add-insight",
+        help="Record a manual research insight for branch memory",
+    )
+    add_insight.add_argument("--branch", required=True)
+    add_insight.add_argument(
+        "--scope",
+        default="branch",
+        choices=["branch", "asset_scope", "cross_asset"],
+    )
+    add_insight.add_argument(
+        "--kind",
+        required=True,
+        choices=["worked", "failed", "risk", "pattern", "next_idea"],
+    )
+    add_insight.add_argument("--text", required=True)
+    add_insight.add_argument("--rule", default="")
+    add_insight.add_argument(
+        "--confidence",
+        default="medium",
+        choices=["low", "medium", "high"],
+    )
+    add_insight.add_argument("--round-id", default="")
+
+    link_branches = sub.add_parser(
+        "link-branches",
+        help="Record a manual relation between two branches",
+    )
+    link_branches.add_argument("--from-branch", required=True)
+    link_branches.add_argument("--to-branch", required=True)
+    link_branches.add_argument(
+        "--type",
+        required=True,
+        choices=[
+            "derived_from",
+            "alternative_to",
+            "inspired_by",
+            "candidate_compare",
+            "final_compare",
+        ],
+    )
+    link_branches.add_argument("--match-score", default="")
+    link_branches.add_argument("--match-basis", default="")
+    link_branches.add_argument(
+        "--status",
+        default="candidate",
+        choices=["candidate", "selected", "rejected", "archived"],
+    )
+    link_branches.add_argument("--note", default="")
+
     init_branch = sub.add_parser("init-branch", help="Create a branch under a session")
     init_branch.add_argument("--session", required=True)
     init_branch.add_argument("--branch-id", required=True)
@@ -304,6 +433,9 @@ def main() -> int:
     run_branch.add_argument("--expected-signal", default="")
     run_branch.add_argument("--summary", default="")
     run_branch.add_argument("--next-step", default="")
+    run_branch.add_argument("--trigger", default="")
+    run_branch.add_argument("--change-summary", default="")
+    run_branch.add_argument("--time-spent-min", default="")
     run_branch.add_argument("--action", action="append", default=[])
     run_branch.add_argument(
         "--python-bin",
@@ -453,6 +585,10 @@ def main() -> int:
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
+    if args.command == "add-insight":
+        return record_manual_insight(args)
+    if args.command == "link-branches":
+        return record_branch_link(args)
     if args.command == "init-branch":
         session = resolve_workspace_arg_path(args.session)
         discovery = load_discovery(session)
@@ -850,7 +986,11 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         (branch / "outputs").mkdir(parents=True, exist_ok=True)
         write_tsv_header(branch / "results.tsv", RESULTS_HEADER)
         if not branch_state_path(branch).exists():
-            write_branch_state(branch, {})
+            write_branch_state(branch, {"created_at": _now()})
+        else:
+            state = load_branch_state(branch)
+            state.setdefault("created_at", _now())
+            write_branch_state(branch, state)
         if not branch_spec_path(branch).exists():
             write_branch_spec(
                 branch,
@@ -883,6 +1023,123 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
         )
         render_session(session)
     return branch
+
+
+def record_manual_insight(args: argparse.Namespace) -> int:
+    branch = resolve_workspace_arg_path(args.branch).resolve()
+    session = branch.parent.parent
+    branches = load_branches(session)
+    branch_rows = next(
+        (item["rows"] for item in branches if item["branch_id"] == branch.name),
+        [],
+    )
+    round_id = str(args.round_id or "").strip()
+    if not round_id and branch_rows:
+        round_id = branch_rows[-1].get("round_id", "")
+    with SessionLock(session):
+        manual_rows = load_manual_memory_rows(
+            session / MEMORY_INSIGHTS_FILENAME,
+            MEMORY_INSIGHTS_HEADER,
+        )
+        manual_rows.append(
+            {
+                "insight_id": next_manual_memory_id(manual_rows, prefix="ins-manual"),
+                "scope": args.scope,
+                "branch_id": branch.name,
+                "round_id": round_id,
+                "kind": args.kind,
+                "statement": str(args.text or "").strip(),
+                "reusable_rule": str(args.rule or "").strip(),
+                "confidence": args.confidence,
+                "origin": "manual",
+            }
+        )
+        write_tsv_rows(
+            session / MEMORY_INSIGHTS_FILENAME,
+            MEMORY_INSIGHTS_HEADER,
+            manual_rows,
+        )
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "memory_insight_added",
+                "branch_id": branch.name,
+                "round_id": round_id,
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": str(args.text or "").strip(),
+                "artifact_path": MEMORY_INSIGHTS_FILENAME,
+            },
+        )
+        render_session(session)
+    print(f"Recorded manual insight for {branch.name}")
+    print(f"  kind: {args.kind}")
+    print(f"  round_id: {round_id or 'not linked'}")
+    print(f"  text: {str(args.text or '').strip()}")
+    return 0
+
+
+def record_branch_link(args: argparse.Namespace) -> int:
+    from_branch = resolve_workspace_arg_path(args.from_branch).resolve()
+    to_branch = resolve_workspace_arg_path(args.to_branch).resolve()
+    from_session = from_branch.parent.parent
+    to_session = to_branch.parent.parent
+    if from_session != to_session:
+        raise RuntimeError("Branch links must stay within the same session.")
+    session = from_session
+    with SessionLock(session):
+        manual_rows = load_manual_memory_rows(
+            session / MEMORY_LINKS_FILENAME,
+            MEMORY_LINKS_HEADER,
+        )
+        manual_rows.append(
+            {
+                "link_id": next_manual_memory_id(manual_rows, prefix="link-manual"),
+                "from_branch_id": from_branch.name,
+                "to_branch_id": to_branch.name,
+                "link_type": args.type,
+                "match_score": str(args.match_score or "").strip(),
+                "match_basis": str(args.match_basis or "").strip(),
+                "status": args.status,
+                "note": str(args.note or "").strip(),
+                "origin": "manual",
+            }
+        )
+        write_tsv_rows(
+            session / MEMORY_LINKS_FILENAME,
+            MEMORY_LINKS_HEADER,
+            manual_rows,
+        )
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "memory_link_added",
+                "branch_id": from_branch.name,
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"{args.type} -> {to_branch.name}"
+                    + (
+                        f" ({str(args.match_basis or '').strip()})"
+                        if str(args.match_basis or "").strip()
+                        else ""
+                    )
+                ),
+                "artifact_path": MEMORY_LINKS_FILENAME,
+            },
+        )
+        render_session(session)
+    print(f"Recorded branch link: {from_branch.name} -> {to_branch.name}")
+    print(f"  type: {args.type}")
+    print(f"  status: {args.status}")
+    return 0
 
 
 def prepare_branch_inputs(args: argparse.Namespace) -> int:
@@ -1228,6 +1485,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
             input_note=args.input_note,
             hypothesis=effective_hypothesis,
             expected_signal=args.expected_signal,
+            trigger=args.trigger,
+            change_summary=args.change_summary,
+            time_spent_min=args.time_spent_min,
             summary=args.summary,
             next_step=args.next_step,
             actions=args.action + [f"hypothesis_source={hypothesis_source}"],
@@ -1377,13 +1637,20 @@ def render_session(session: Path) -> None:
     discovery = load_discovery(session)
     readiness = load_readiness(session)
     branches = load_branches(session)
+    memory_snapshot = render_memory_snapshot(session, discovery, readiness, branches)
     for branch in branches:
-        render_branch(branch, discovery, readiness, session.name)
+        render_branch(branch, discovery, readiness, session.name, memory_snapshot)
     session_readme = build_session_readme(session, discovery, readiness, branches)
     (session / "README.md").write_text(session_readme, encoding="utf-8")
 
 
-def render_branch(branch: dict, discovery: dict, readiness: dict, exp_id: str) -> None:
+def render_branch(
+    branch: dict,
+    discovery: dict,
+    readiness: dict,
+    exp_id: str,
+    memory_snapshot: dict,
+) -> None:
     branch_dir = branch["branch_dir"]
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
@@ -1395,7 +1662,7 @@ def render_branch(branch: dict, discovery: dict, readiness: dict, exp_id: str) -
         build_branch_readme(branch, latest_note, exp_id), encoding="utf-8"
     )
     (branch_dir / "memory.md").write_text(
-        build_memory(branch, discovery), encoding="utf-8"
+        build_memory(branch, discovery, memory_snapshot), encoding="utf-8"
     )
     (branch_dir / "thesis.md").write_text(
         build_thesis(branch, discovery, readiness), encoding="utf-8"
@@ -1406,11 +1673,17 @@ def print_status(session: Path) -> None:
     discovery = load_discovery(session)
     readiness = load_readiness(session)
     branches = load_branches(session)
+    memory_branches = read_tsv_rows(session / MEMORY_BRANCHES_FILENAME)
+    insights = read_tsv_rows(session / MEMORY_INSIGHTS_FILENAME)
+    links = read_tsv_rows(session / MEMORY_LINKS_FILENAME)
     print(
         f"Session: {session.name} ({discovery.get('ticker', session.parent.name.upper())})"
     )
     print(f"Branches: {len(branches)}")
     print(f"Total rounds: {sum(len(branch['rows']) for branch in branches)}")
+    print(
+        f"Memory: {len(memory_branches)} branches, {len(insights)} insights, {len(links)} links"
+    )
     readiness_summary = format_data_readiness_summary(readiness)
     if readiness_summary:
         print(f"Discovery readiness: {readiness_summary}")
@@ -1457,6 +1730,18 @@ def check_session(session: Path, *, strict: bool) -> int:
         failures.append("Missing events.tsv")
     if not (session / "README.md").exists():
         failures.append("Missing session README.md")
+    for required in (
+        MEMORY_MANIFEST_FILENAME,
+        MEMORY_BRANCHES_FILENAME,
+        MEMORY_ROUNDS_FILENAME,
+        MEMORY_VALIDATIONS_FILENAME,
+        MEMORY_INSIGHTS_FILENAME,
+        MEMORY_LINKS_FILENAME,
+        f"{MEMORY_VIEWS_DIRNAME}/{MEMORY_OVERVIEW_FILENAME}",
+        f"{MEMORY_VIEWS_DIRNAME}/{MEMORY_COMPARE_FILENAME}",
+    ):
+        if not (session / required).exists():
+            failures.append(f"Missing {required}")
 
     branches = load_branches(session)
     if not branches:
@@ -1515,7 +1800,11 @@ def check_session(session: Path, *, strict: bool) -> int:
                 branch_dir / "README.md",
                 branch_dir / "thesis.md",
                 branch_dir / "memory.md",
+                session / MEMORY_VIEWS_DIRNAME / MEMORY_OVERVIEW_FILENAME,
+                session / MEMORY_VIEWS_DIRNAME / MEMORY_COMPARE_FILENAME,
             ):
+                if not text_path.exists():
+                    continue
                 text = text_path.read_text(encoding="utf-8")
                 if "Fill in" in text or "{{" in text or "}}" in text:
                     failures.append(
@@ -1772,6 +2061,9 @@ def build_branch_readme(branch: dict, latest_note: dict[str, str], exp_id: str) 
     diagnostics_note = latest_note or debug_note
     keep_rows = [row for row in rows if row.get("decision") == "keep"]
     branch_hypothesis = current_branch_hypothesis(branch["branch_dir"], rows)
+    source_type = branch_source_type(branch["branch_dir"], {})
+    method_family = branch_method_family(branch["branch_dir"])
+    parent_branch_id = branch_parent_branch_id(branch["branch_dir"])
     ledger = (
         "\n".join(
             f"1. `{row.get('round_id', '?')}` - {row.get('description', '?')} [{row.get('score', '?')}] {row.get('decision', '?')}"
@@ -1788,6 +2080,9 @@ generated by Abel-alpha narrative layer
 - branch_id: `{branch["branch_id"]}`
 - ticker: `{latest.get("ticker", branch["ticker"])}`
 - exp_id: `{exp_id}`
+- source_type: `{source_type}`
+- method_family: `{method_family}`
+- parent_branch_id: `{parent_branch_id or 'none'}`
 - current_status: `{latest.get("decision", "debugged" if debug_note else "scaffolded" if not rows else "exploring")}`
 - total_rounds: `{len(rows)}`
 - latest_round: `{latest.get("round_id", "debug" if debug_note else "none")}`
@@ -1842,47 +2137,100 @@ See `branch.yaml` for the explicit branch inputs and `thesis.md` for the branch 
 """
 
 
-def build_memory(branch: dict, discovery: dict) -> str:
-    rows = branch["rows"]
-    keep_rows = [row for row in rows if row.get("decision") == "keep"]
-    discard_rows = [row for row in rows if row.get("decision") == "discard"]
-    baseline = (
-        f"- latest KEEP: {keep_rows[-1].get('round_id', 'none')} ({keep_rows[-1].get('description', 'n/a')})"
-        if keep_rows
-        else "- No KEEP baseline yet."
+def build_memory(branch: dict, discovery: dict, memory_snapshot: dict) -> str:
+    branch_row = next(
+        (
+            row
+            for row in memory_snapshot.get("branches", [])
+            if row.get("branch_id") == branch["branch_id"]
+        ),
+        {},
     )
-    exhausted = (
-        "\n".join(
-            f"- {row.get('round_id', '?')} {row.get('description', 'discarded')}"
-            for row in discard_rows[-5:]
+    insights = [
+        row
+        for row in memory_snapshot.get("insights", [])
+        if row.get("branch_id") == branch["branch_id"]
+    ]
+    worked = [row for row in insights if row.get("kind") == "worked"]
+    failed = [row for row in insights if row.get("kind") in {"failed", "risk"}]
+    patterns = [row for row in insights if row.get("kind") == "pattern"]
+    next_ideas = [row for row in insights if row.get("kind") == "next_idea"]
+    compare_links = [
+        row
+        for row in memory_snapshot.get("links", [])
+        if row.get("from_branch_id") == branch["branch_id"]
+        or row.get("to_branch_id") == branch["branch_id"]
+    ]
+
+    def render_insight_lines(rows: list[dict[str, str]], *, fallback: str) -> str:
+        if not rows:
+            return fallback
+        return "\n".join(
+            f"- {row.get('round_id') or 'branch'} [{row.get('origin', 'auto')}] {row.get('statement', '')}"
+            + (
+                f" -> {row.get('reusable_rule', '')}"
+                if row.get("reusable_rule")
+                else ""
+            )
+            for row in rows[:5]
         )
-        or "- none recorded yet"
-    )
-    worked = (
+
+    compare_lines = (
         "\n".join(
-            f"- {row.get('round_id', '?')} {row.get('description', 'kept')}"
-            for row in keep_rows[-5:]
+            f"- {row.get('link_type', 'candidate')} -> "
+            f"{row.get('to_branch_id') if row.get('from_branch_id') == branch['branch_id'] else row.get('from_branch_id')}"
+            + (
+                f" (score {row.get('match_score')})"
+                if row.get("match_score")
+                else ""
+            )
+            + (
+                f": {row.get('match_basis')}"
+                if row.get("match_basis")
+                else ""
+            )
+            for row in compare_links[:5]
         )
-        or "- none recorded yet"
+        or "- no compare relationships recorded yet"
     )
+
     return f"""# {discovery.get("ticker", branch["ticker"])} Research Memory
 
 generated by Abel-alpha narrative layer
 
-## K Budget
+## Branch Profile
+
+- branch_id: `{branch['branch_id']}`
+- source_type: `{branch_row.get('source_type', 'unknown')}`
+- method_family: `{branch_row.get('method_family', 'unknown')}`
+- parent_branch_id: `{branch_row.get('parent_branch_id', 'none') or 'none'}`
+- status: `{branch_row.get('status', 'exploring')}`
+- thesis: `{branch_row.get('thesis_short', 'not recorded')}`
+
+## Discovery Context
+
 - Discovery: K={discovery.get("K_discovery", 0)} via {discovery.get("source", "unknown")}
-
-## Baseline
-{baseline}
-
-## Exhausted Directions
-{exhausted}
+- backtest_start: `{_get_backtest_start(discovery)}`
 
 ## What Worked
-{worked}
 
-## Ideas Not Yet Tried
-- record the next untested branch idea here
+{render_insight_lines(worked, fallback='- none recorded yet')}
+
+## What Failed
+
+{render_insight_lines(failed, fallback='- none recorded yet')}
+
+## Reusable Insights
+
+{render_insight_lines(patterns, fallback='- none recorded yet')}
+
+## Compare Candidates
+
+{compare_lines}
+
+## Open Questions
+
+{render_insight_lines(next_ideas, fallback='- none recorded yet')}
 """
 
 
@@ -1965,6 +2313,625 @@ Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.g
 
 {format_risks(latest_note.get("failures", "none"))}
 """
+
+
+def render_memory_snapshot(
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+    branches: list[dict],
+) -> dict:
+    manual_insights = load_manual_memory_rows(
+        session / MEMORY_INSIGHTS_FILENAME,
+        MEMORY_INSIGHTS_HEADER,
+    )
+    manual_links = load_manual_memory_rows(
+        session / MEMORY_LINKS_FILENAME,
+        MEMORY_LINKS_HEADER,
+    )
+    events = read_tsv_rows(session / "events.tsv")
+    validations_rows, validation_lookup = build_memory_validation_rows(branches)
+    branch_rows = build_memory_branch_rows(
+        session=session,
+        discovery=discovery,
+        branches=branches,
+        validation_lookup=validation_lookup,
+    )
+    round_rows = build_memory_round_rows(branches, events)
+    auto_insights = build_auto_insight_rows(branches)
+    auto_links = build_auto_link_rows(branches)
+    insight_rows = auto_insights + manual_insights
+    link_rows = auto_links + manual_links
+    manifest = build_memory_manifest(
+        session=session,
+        discovery=discovery,
+        readiness=readiness,
+        branches=branches,
+        branch_rows=branch_rows,
+        round_rows=round_rows,
+        validation_rows=validations_rows,
+        insight_rows=insight_rows,
+        link_rows=link_rows,
+    )
+    write_json_file(session / MEMORY_MANIFEST_FILENAME, manifest)
+    write_tsv_rows(session / MEMORY_BRANCHES_FILENAME, MEMORY_BRANCHES_HEADER, branch_rows)
+    write_tsv_rows(session / MEMORY_ROUNDS_FILENAME, MEMORY_ROUNDS_HEADER, round_rows)
+    write_tsv_rows(
+        session / MEMORY_VALIDATIONS_FILENAME,
+        MEMORY_VALIDATIONS_HEADER,
+        validations_rows,
+    )
+    write_tsv_rows(
+        session / MEMORY_INSIGHTS_FILENAME,
+        MEMORY_INSIGHTS_HEADER,
+        insight_rows,
+    )
+    write_tsv_rows(session / MEMORY_LINKS_FILENAME, MEMORY_LINKS_HEADER, link_rows)
+    views_dir = session / MEMORY_VIEWS_DIRNAME
+    views_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = {
+        "manifest": manifest,
+        "branches": branch_rows,
+        "rounds": round_rows,
+        "validations": validations_rows,
+        "insights": insight_rows,
+        "links": link_rows,
+    }
+    (views_dir / MEMORY_OVERVIEW_FILENAME).write_text(
+        build_memory_overview(session, discovery, readiness, branches, snapshot),
+        encoding="utf-8",
+    )
+    (views_dir / MEMORY_COMPARE_FILENAME).write_text(
+        build_memory_compare_view(session, discovery, snapshot),
+        encoding="utf-8",
+    )
+    return snapshot
+
+
+def build_memory_manifest(
+    *,
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+    branches: list[dict],
+    branch_rows: list[dict[str, str]],
+    round_rows: list[dict[str, str]],
+    validation_rows: list[dict[str, str]],
+    insight_rows: list[dict[str, str]],
+    link_rows: list[dict[str, str]],
+) -> dict:
+    source_types = {row.get("source_type", "") for row in branch_rows if row.get("source_type")}
+    compare_axis = "branch_memory"
+    if "causal" in source_types and "baseline" in source_types:
+        compare_axis = "causal_vs_baseline"
+    return {
+        "schema_version": 1,
+        "exp_id": session.name,
+        "asset_scope": discovery.get("ticker", session.parent.name.upper()),
+        "compare_axis": compare_axis,
+        "discovery_source": discovery.get("source", "unknown"),
+        "backtest_start": _get_backtest_start(discovery),
+        "created_at": discovery.get("created_at", _now()),
+        "updated_at": _now(),
+        "branch_count": len(branches),
+        "memory_counts": {
+            "branches": len(branch_rows),
+            "rounds": len(round_rows),
+            "validations": len(validation_rows),
+            "insights": len(insight_rows),
+            "links": len(link_rows),
+        },
+        "readiness_summary": format_data_readiness_summary(readiness),
+    }
+
+
+def build_memory_branch_rows(
+    *,
+    session: Path,
+    discovery: dict,
+    branches: list[dict],
+    validation_lookup: dict[tuple[str, str], str],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for branch in branches:
+        branch_dir = branch["branch_dir"]
+        branch_rows = branch["rows"]
+        latest = branch_rows[-1] if branch_rows else {}
+        best = best_branch_row(branch_rows)
+        best_round_id = best.get("round_id", "") if best else ""
+        rows.append(
+            {
+                "branch_id": branch["branch_id"],
+                "asset_scope": discovery.get("ticker", session.parent.name.upper()),
+                "exp_id": session.name,
+                "method_family": branch_method_family(branch_dir),
+                "source_type": branch_source_type(branch_dir, discovery),
+                "parent_branch_id": branch_parent_branch_id(branch_dir),
+                "status": branch_memory_status(session, branch),
+                "latest_round_id": latest.get("round_id", ""),
+                "best_round_id": best_round_id,
+                "best_validation_id": validation_lookup.get(
+                    (branch["branch_id"], best_round_id),
+                    "",
+                ),
+                "thesis_short": branch_thesis_short(branch),
+                "created_at": branch_created_at(branch_dir),
+            }
+        )
+    return rows
+
+
+def build_memory_round_rows(
+    branches: list[dict],
+    events: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for branch in branches:
+        for row in branch["rows"]:
+            round_id = row.get("round_id", "")
+            note = read_round_note(branch["branch_dir"], round_id)
+            actions = read_round_actions(branch["branch_dir"], round_id)
+            ended_at = round_event_timestamp(events, branch["branch_id"], round_id)
+            rows.append(
+                {
+                    "round_id": round_id,
+                    "branch_id": branch["branch_id"],
+                    "stage": mode_to_stage(row.get("mode", "")),
+                    "started_at": ended_at,
+                    "ended_at": ended_at,
+                    "trigger": note.get("trigger", row.get("description", "")),
+                    "hypothesis": note.get("hypothesis", ""),
+                    "change_summary": note.get(
+                        "change_summary",
+                        note.get("summary", row.get("description", "")),
+                    ),
+                    "action_summary": "; ".join(actions) or row.get("description", ""),
+                    "decision": row.get("decision", ""),
+                    "next_step": note.get("next_step", ""),
+                    "time_spent_min": note.get("time_spent_min", ""),
+                }
+            )
+    return rows
+
+
+def build_memory_validation_rows(
+    branches: list[dict],
+) -> tuple[list[dict[str, str]], dict[tuple[str, str], str]]:
+    rows: list[dict[str, str]] = []
+    lookup: dict[tuple[str, str], str] = {}
+    counter = 1
+    for branch in branches:
+        for row in branch["rows"]:
+            validation_id = f"val-{counter:03d}"
+            counter += 1
+            round_id = row.get("round_id", "")
+            lookup[(branch["branch_id"], round_id)] = validation_id
+            rows.append(
+                {
+                    "validation_id": validation_id,
+                    "branch_id": branch["branch_id"],
+                    "round_id": round_id,
+                    "engine": "Abel-edge",
+                    "verdict": row.get("verdict", ""),
+                    "score": row.get("score", ""),
+                    "sharpe": row.get("sharpe", ""),
+                    "lo_adj": row.get("lo_adj", ""),
+                    "omega": row.get("omega", ""),
+                    "total_return": row.get("pnl", ""),
+                    "max_dd": row.get("max_dd", ""),
+                    "result_ref": row.get("result_path", ""),
+                    "report_ref": row.get("report_path", ""),
+                }
+            )
+    return rows, lookup
+
+
+def build_auto_insight_rows(branches: list[dict]) -> list[dict[str, str]]:
+    payloads: list[dict[str, str]] = []
+    for branch in branches:
+        branch_id = branch["branch_id"]
+        branch_dir = branch["branch_dir"]
+        rows = branch["rows"]
+        latest = rows[-1] if rows else {}
+        latest_note = read_round_note(branch_dir, latest.get("round_id", "")) if latest else {}
+        hypothesis = current_branch_hypothesis(branch_dir, rows)
+        if has_explicit_hypothesis(hypothesis):
+            payloads.append(
+                {
+                    "scope": "branch",
+                    "branch_id": branch_id,
+                    "round_id": latest.get("round_id", ""),
+                    "kind": "pattern",
+                    "statement": hypothesis,
+                    "reusable_rule": "Treat this as the branch thesis until a stronger validated explanation replaces it.",
+                    "confidence": "medium",
+                }
+            )
+        latest_keep = latest_row_by_decision(rows, "keep")
+        if latest_keep is not None:
+            keep_note = read_round_note(branch_dir, latest_keep.get("round_id", ""))
+            payloads.append(
+                {
+                    "scope": "branch",
+                    "branch_id": branch_id,
+                    "round_id": latest_keep.get("round_id", ""),
+                    "kind": "worked",
+                    "statement": latest_keep.get("description", "kept baseline"),
+                    "reusable_rule": keep_note.get(
+                        "next_step",
+                        "Refine from the latest KEEP baseline before opening a sibling branch.",
+                    ),
+                    "confidence": "high",
+                }
+            )
+        latest_discard = latest_row_by_decision(rows, "discard")
+        if latest_discard is not None:
+            discard_note = read_round_note(branch_dir, latest_discard.get("round_id", ""))
+            payloads.append(
+                {
+                    "scope": "branch",
+                    "branch_id": branch_id,
+                    "round_id": latest_discard.get("round_id", ""),
+                    "kind": "failed",
+                    "statement": discard_note.get(
+                        "failures",
+                        latest_discard.get("description", "discarded direction"),
+                    ),
+                    "reusable_rule": "Do not retry this direction without changing the causal claim, drivers, or start window.",
+                    "confidence": "high",
+                }
+            )
+        if latest_note.get("failures") and latest.get("decision", "") != "discard":
+            payloads.append(
+                {
+                    "scope": "branch",
+                    "branch_id": branch_id,
+                    "round_id": latest.get("round_id", ""),
+                    "kind": "risk",
+                    "statement": latest_note.get("failures", "none"),
+                    "reusable_rule": "Fix this blocker before trusting the next validation result.",
+                    "confidence": "medium",
+                }
+            )
+        if latest_note.get("next_step"):
+            payloads.append(
+                {
+                    "scope": "branch",
+                    "branch_id": branch_id,
+                    "round_id": latest.get("round_id", ""),
+                    "kind": "next_idea",
+                    "statement": latest_note.get("next_step", ""),
+                    "reusable_rule": "Use this as the next experiment seed if no stronger link-based compare candidate exists.",
+                    "confidence": "medium",
+                }
+            )
+    rows: list[dict[str, str]] = []
+    for index, payload in enumerate(payloads, start=1):
+        rows.append(
+            {
+                "insight_id": f"ins-auto-{index:03d}",
+                "origin": "auto",
+                **payload,
+            }
+        )
+    return rows
+
+
+def build_auto_link_rows(branches: list[dict]) -> list[dict[str, str]]:
+    payloads: list[dict[str, str]] = []
+    branch_map = {branch["branch_id"]: branch for branch in branches}
+    for branch in branches:
+        parent_branch_id = branch_parent_branch_id(branch["branch_dir"])
+        if parent_branch_id and parent_branch_id in branch_map:
+            payloads.append(
+                {
+                    "from_branch_id": branch["branch_id"],
+                    "to_branch_id": parent_branch_id,
+                    "link_type": "derived_from",
+                    "match_score": "",
+                    "match_basis": "parent_branch_id recorded in branch.yaml",
+                    "status": "selected",
+                    "note": "auto-derived from branch metadata",
+                }
+            )
+    validated = [branch for branch in branches if branch["rows"]]
+    for branch in validated:
+        left_source = branch_source_type(branch["branch_dir"], {})
+        if left_source != "causal":
+            continue
+        for candidate in validated:
+            if candidate["branch_id"] == branch["branch_id"]:
+                continue
+            right_source = branch_source_type(candidate["branch_dir"], {})
+            if right_source != "baseline":
+                continue
+            payloads.append(
+                {
+                    "from_branch_id": branch["branch_id"],
+                    "to_branch_id": candidate["branch_id"],
+                    "link_type": "candidate_compare",
+                    "match_score": f"{candidate_compare_score(branch, candidate):.2f}",
+                    "match_basis": candidate_compare_basis(branch, candidate),
+                    "status": "candidate",
+                    "note": "auto-suggested compare candidate",
+                }
+            )
+    rows: list[dict[str, str]] = []
+    for index, payload in enumerate(payloads, start=1):
+        rows.append(
+            {
+                "link_id": f"link-auto-{index:03d}",
+                "origin": "auto",
+                **payload,
+            }
+        )
+    return rows
+
+
+def build_memory_overview(
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+    branches: list[dict],
+    memory_snapshot: dict,
+) -> str:
+    branch_lines = (
+        "\n".join(
+            f"1. `{row['branch_id']}` - `{row['source_type']}` / `{row['method_family']}` / `{row['status']}` / best `{row['best_round_id'] or 'none'}`"
+            for row in memory_snapshot["branches"]
+        )
+        or "1. `No branches yet.`"
+    )
+    insight_lines = (
+        "\n".join(
+            f"1. `{row['kind']}` `{row['branch_id'] or 'session'}` - {row['statement']}"
+            for row in memory_snapshot["insights"][:8]
+        )
+        or "1. `No insights recorded yet.`"
+    )
+    compare_candidates = [
+        row
+        for row in memory_snapshot["links"]
+        if row.get("link_type") in {"candidate_compare", "final_compare"}
+    ]
+    compare_lines = (
+        "\n".join(
+            f"1. `{row['from_branch_id']}` -> `{row['to_branch_id']}` / `{row['link_type']}` / score `{row.get('match_score') or 'n/a'}` / {row.get('match_basis') or 'not recorded'}"
+            for row in compare_candidates[:8]
+        )
+        or "1. `No compare candidates yet.`"
+    )
+    return f"""# {discovery.get("ticker", session.parent.name.upper())} Memory Overview
+
+generated by Abel-alpha narrative layer
+
+## Summary
+
+- exp_id: `{session.name}`
+- asset_scope: `{discovery.get("ticker", session.parent.name.upper())}`
+- discovery_source: `{discovery.get("source", "unknown")}`
+- backtest_start: `{_get_backtest_start(discovery)}`
+- readiness: `{format_data_readiness_summary(readiness) or 'not recorded'}`
+- branches: `{len(memory_snapshot['branches'])}`
+- insights: `{len(memory_snapshot['insights'])}`
+- links: `{len(memory_snapshot['links'])}`
+
+## Branches
+
+{branch_lines}
+
+## Reusable Insights
+
+{insight_lines}
+
+## Compare Candidates
+
+{compare_lines}
+
+## Next Step
+
+{session_next_step(session, branches, discovery, readiness)}
+"""
+
+
+def build_memory_compare_view(
+    session: Path,
+    discovery: dict,
+    memory_snapshot: dict,
+) -> str:
+    branch_rows = {row["branch_id"]: row for row in memory_snapshot["branches"]}
+    validation_rows = {row["branch_id"]: row for row in memory_snapshot["validations"]}
+    compare_rows = [
+        row
+        for row in memory_snapshot["links"]
+        if row.get("link_type") in {"candidate_compare", "final_compare"}
+    ]
+    compare_rows.sort(
+        key=lambda row: (
+            1 if row.get("link_type") == "final_compare" else 0,
+            float(row.get("match_score") or 0),
+        ),
+        reverse=True,
+    )
+    lines = []
+    for row in compare_rows:
+        left = validation_rows.get(row["from_branch_id"], {})
+        right = validation_rows.get(row["to_branch_id"], {})
+        lines.append(
+            "1. "
+            f"`{row['from_branch_id']}` ({branch_rows.get(row['from_branch_id'], {}).get('source_type', 'unknown')}) "
+            f"vs `{row['to_branch_id']}` ({branch_rows.get(row['to_branch_id'], {}).get('source_type', 'unknown')}) "
+            f"-> `{row['link_type']}` / `{row.get('status', 'candidate')}` / score `{row.get('match_score') or 'n/a'}`. "
+            f"Metrics: left Sharpe `{left.get('sharpe', 'n/a')}`, right Sharpe `{right.get('sharpe', 'n/a')}`. "
+            f"Basis: `{row.get('match_basis') or 'not recorded'}`"
+        )
+    body = "\n".join(lines) or "1. `No compare relationships recorded yet.`"
+    return f"""# {discovery.get("ticker", session.parent.name.upper())} Compare View
+
+generated by Abel-alpha narrative layer
+
+## Compare Candidates
+
+{body}
+"""
+
+
+def branch_source_type(branch_dir: Path, discovery: dict) -> str:
+    branch_spec = load_branch_spec(branch_dir)
+    configured = str(branch_spec.get("source_type") or "").strip().lower()
+    if configured in {"causal", "baseline", "hybrid"}:
+        return configured
+    name = branch_dir.name.lower()
+    if "baseline" in name or name.startswith("sma") or name.startswith("rule"):
+        return "baseline"
+    if "graph" in name:
+        return "causal"
+    if discovery.get("source") not in {None, "", "unknown", "pending"}:
+        return "causal"
+    return "hybrid"
+
+
+def branch_method_family(branch_dir: Path) -> str:
+    branch_spec = load_branch_spec(branch_dir)
+    configured = str(branch_spec.get("method_family") or "").strip().lower()
+    if configured in {"graph", "technical", "rule", "ml", "hybrid"}:
+        return configured
+    name = branch_dir.name.lower()
+    if "graph" in name:
+        return "graph"
+    if "sma" in name or "rule" in name:
+        return "rule"
+    if "ml" in name:
+        return "ml"
+    return "hybrid"
+
+
+def branch_parent_branch_id(branch_dir: Path) -> str:
+    branch_spec = load_branch_spec(branch_dir)
+    return str(branch_spec.get("parent_branch_id") or "").strip()
+
+
+def branch_created_at(branch_dir: Path) -> str:
+    state = load_branch_state(branch_dir)
+    created_at = str(state.get("created_at") or "").strip()
+    if created_at:
+        return created_at
+    return datetime.fromtimestamp(branch_dir.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def branch_memory_status(session: Path, branch: dict) -> str:
+    promotions_dir = session / "promotions" / branch["branch_id"]
+    if promotions_dir.exists():
+        return "promoted"
+    if not branch["rows"]:
+        return "exploring"
+    latest = branch["rows"][-1]
+    if latest.get("decision") == "discard":
+        return "archived"
+    return "validating"
+
+
+def branch_thesis_short(branch: dict) -> str:
+    hypothesis = current_branch_hypothesis(branch["branch_dir"], branch["rows"])
+    if has_explicit_hypothesis(hypothesis):
+        return hypothesis
+    latest = branch["rows"][-1] if branch["rows"] else {}
+    if latest.get("description"):
+        return str(latest.get("description") or "").strip()
+    branch_spec = load_branch_spec(branch["branch_dir"])
+    selected = format_simple_nodes(branch_spec.get("selected_drivers") or [], limit=5)
+    return f"target {branch['ticker']} with drivers {selected}"
+
+
+def best_branch_row(rows: list[dict[str, str]]) -> dict[str, str] | None:
+    if not rows:
+        return None
+    return max(
+        rows,
+        key=lambda row: (
+            decision_rank(row.get("decision", "")),
+            verdict_rank(row.get("verdict", "")),
+            parse_score_ratio(row.get("score", "")),
+            float(row.get("lo_adj") or 0),
+            float(row.get("sharpe") or 0),
+        ),
+    )
+
+
+def latest_row_by_decision(
+    rows: list[dict[str, str]],
+    decision: str,
+) -> dict[str, str] | None:
+    for row in reversed(rows):
+        if row.get("decision") == decision:
+            return row
+    return None
+
+
+def mode_to_stage(mode: str) -> str:
+    normalized = str(mode or "").strip().lower()
+    if normalized in {"explore", "exploit"}:
+        return "exploration"
+    return normalized or "exploration"
+
+
+def round_event_timestamp(
+    events: list[dict[str, str]],
+    branch_id: str,
+    round_id: str,
+) -> str:
+    for row in reversed(events):
+        if (
+            row.get("event") == "round_recorded"
+            and row.get("branch_id") == branch_id
+            and row.get("round_id") == round_id
+        ):
+            return row.get("timestamp", "")
+    return ""
+
+
+def read_round_actions(branch_dir: Path, round_id: str) -> list[str]:
+    if not round_id:
+        return []
+    path = branch_dir / "rounds" / f"{round_id}.md"
+    if not path.exists():
+        return []
+    actions: list[str] = []
+    in_actions = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.rstrip()
+        if line.startswith("## "):
+            if in_actions:
+                break
+            in_actions = line.strip() == "## Actions"
+            continue
+        if in_actions:
+            stripped = line.strip()
+            if stripped.startswith("1. "):
+                actions.append(stripped[3:].strip())
+    return actions
+
+
+def candidate_compare_basis(left: dict, right: dict) -> str:
+    left_spec = load_branch_spec(left["branch_dir"])
+    right_spec = load_branch_spec(right["branch_dir"])
+    basis = ["same asset scope and both have validated rounds"]
+    if left_spec.get("requested_start") == right_spec.get("requested_start"):
+        basis.append("same requested_start")
+    if left_spec.get("overlap_mode") == right_spec.get("overlap_mode"):
+        basis.append("same overlap_mode")
+    return "; ".join(basis)
+
+
+def candidate_compare_score(left: dict, right: dict) -> float:
+    left_spec = load_branch_spec(left["branch_dir"])
+    right_spec = load_branch_spec(right["branch_dir"])
+    score = 0.6
+    if left_spec.get("requested_start") == right_spec.get("requested_start"):
+        score += 0.2
+    if left_spec.get("overlap_mode") == right_spec.get("overlap_mode"):
+        score += 0.2
+    return min(score, 1.0)
 
 
 def format_discovery_nodes(items: list[object], *, limit: int = 5) -> str:
@@ -2563,6 +3530,9 @@ def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict)
         "branch_id": branch.name,
         "target": discovery.get("ticker", branch.parent.parent.parent.name.upper()),
         "hypothesis": "",
+        "source_type": "causal",
+        "method_family": "graph",
+        "parent_branch_id": "",
         "requested_start": _get_backtest_start(discovery),
         "resolved_start_policy": "requested",
         "overlap_mode": "target_only",
@@ -2922,8 +3892,11 @@ def read_round_note(branch_dir: Path, round_id: str) -> dict[str, str]:
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         for key in (
+            "trigger",
             "hypothesis",
             "expected_signal",
+            "change_summary",
+            "time_spent_min",
             "failures",
             "failure_signature",
             "runtime_stage",
@@ -2975,6 +3948,7 @@ def render_round_note(**kwargs) -> str:
 ## Inputs And Hypothesis
 
 - input: `{kwargs.get("input_note") or f"Branch {kwargs['branch_id']} entering {kwargs['round_id']}."}`
+- trigger: `{kwargs.get("trigger") or kwargs["description"]}`
 - hypothesis: `{normalize_hypothesis_text(kwargs.get("hypothesis", ""))}`
 - expected_signal: `{kwargs.get("expected_signal") or "Improve evaluation outcome versus the current working baseline."}`
 
@@ -3009,6 +3983,8 @@ def render_round_note(**kwargs) -> str:
 
 ## Conclusion
 
+- change_summary: `{kwargs.get("change_summary") or kwargs["description"]}`
+- time_spent_min: `{kwargs.get("time_spent_min") or "not recorded"}`
 - summary: `{kwargs.get("summary") or f"Recorded {result.get('verdict', 'ERROR')} {result.get('score', '?/?')}."}`
 - next_step: `{kwargs.get("next_step") or "Review the branch README and decide whether to keep refining or open a new branch."}`
 """
@@ -3111,6 +4087,33 @@ def read_tsv_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
+def load_manual_memory_rows(
+    path: Path,
+    header: list[str],
+) -> list[dict[str, str]]:
+    rows = read_tsv_rows(path)
+    manual_rows: list[dict[str, str]] = []
+    for row in rows:
+        if row.get("origin") != "manual":
+            continue
+        manual_rows.append({key: str(row.get(key, "") or "") for key in header})
+    return manual_rows
+
+
+def next_manual_memory_id(rows: list[dict[str, str]], *, prefix: str) -> str:
+    next_index = 1
+    for row in rows:
+        for key in ("insight_id", "link_id"):
+            value = str(row.get(key, "") or "")
+            marker = f"{prefix}-"
+            if not value.startswith(marker):
+                continue
+            suffix = value[len(marker) :]
+            if suffix.isdigit():
+                next_index = max(next_index, int(suffix) + 1)
+    return f"{prefix}-{next_index:03d}"
+
+
 def write_tsv_header(path: Path, header: list[str]) -> None:
     if path.exists():
         return
@@ -3120,11 +4123,25 @@ def write_tsv_header(path: Path, header: list[str]) -> None:
         writer.writeheader()
 
 
+def write_tsv_rows(path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=header, delimiter="\t")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in header})
+
+
 def append_tsv_row(path: Path, header: list[str], row: dict[str, str]) -> None:
     write_tsv_header(path, header)
     with path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=header, delimiter="\t")
         writer.writerow(row)
+
+
+def write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def format_event_line(row: dict[str, str]) -> str:
