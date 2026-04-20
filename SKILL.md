@@ -21,16 +21,18 @@ Use `Abel-alpha` as a workspace-first research skill.
 The CLI commands are the tools this skill uses to get the user into the right
 workspace and continue research there.
 
-The purpose of this skill is not just to run a workflow. Its job is to turn
-Abel's causal graph information into a better exploration prior so strategy
-search becomes more targeted, more compounding, and less like blind feature
-search.
+The point of this skill is not to make the workflow feel elaborate.
+The point is to make exploration less blind.
+
+Abel's causal graph is the opening prior, not the final answer.
+Use it to narrow the search space, surface more plausible mechanisms, and make
+each round compound on a smaller, more defensible set of ideas.
 
 In practice, this skill should help the agent:
 
 - start causal-first instead of scanning a huge undirected space
 - turn discovery into a small explicit branch definition, not a giant candidate dump
-- compound each round inside a persistent workspace instead of restarting from scratch
+- preserve compounding inside a persistent workspace instead of restarting from scratch
 - use the CLI as tooling in service of exploration quality, not as the end goal
 
 Keep the mental model simple:

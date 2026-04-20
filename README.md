@@ -6,9 +6,11 @@ Workspace-first research skill for agents.
 area. The CLI commands are the tools the skill uses to detect or create that
 workspace, prepare its runtime, and continue the research loop inside it.
 
-The point is to help agents use Abel's causal graph information as a stronger
-exploration prior: narrower search, clearer branch hypotheses, and faster
-compounding from one round to the next.
+The point is not to make the workflow feel elaborate. The point is to make
+strategy exploration less blind.
+
+Use Abel's causal graph as the opening prior: narrower search, clearer branch
+hypotheses, and faster compounding from one round to the next.
 
 ## Default Model
 

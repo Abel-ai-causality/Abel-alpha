@@ -5,6 +5,6 @@ interface:
     Use $abel-alpha to detect, reuse, or create the default Abel workspace for
     the current launch root, always use an explicit workspace path when
     creating, prepare the workspace runtime, reuse existing auth before
-    starting a new login, and use Abel causal discovery as the default search
-    prior while continuing the session, branch, and round workflow through the
-    Abel-alpha CLI tools.
+    starting a new login, and treat Abel causal discovery as the opening prior
+    that narrows search and improves compounding while continuing the session,
+    branch, and round workflow through the Abel-alpha CLI tools.
