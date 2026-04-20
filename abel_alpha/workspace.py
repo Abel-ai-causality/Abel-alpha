@@ -176,8 +176,11 @@ def render_workspace_readme(name: str) -> str:
 
 This is an Abel-alpha research workspace.
 
-This file describes how to work inside an existing workspace.
+Treat this directory as the canonical workspace for this working area.
 Treat this workspace's `.venv` as the canonical runtime for daily research.
+
+The CLI commands below are the tools Abel-alpha uses to continue work inside
+this workspace.
 
 ## Standard Flow
 
@@ -223,6 +226,9 @@ Run `abel-alpha doctor` before opening a session.
 def render_workspace_agents() -> str:
     """Render the starter AGENTS guide for a new workspace."""
     return """# AGENTS.md — Abel-alpha Workspace
+
+Use this workspace as the default place to continue research for this working
+area. The CLI commands below are tools for operating inside this workspace.
 
 ## I want to...
 

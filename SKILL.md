@@ -17,19 +17,16 @@ metadata:
 Causation is the default prior because it is more likely to survive regime change
 than blind correlation scans.
 
-Use `Abel-alpha` as a workspace-first research CLI.
-The point is not to make the workspace feel clever. The point is to help an
-agent converge on a tradable mechanism with fewer wasted rounds.
+Use `Abel-alpha` as a workspace-first research skill.
+The CLI commands are not the main product surface. They are the tools this
+skill uses to get the user into the right workspace and continue research there.
 
-For normal use, think in terms of one workspace and one canonical runtime:
+Keep the mental model simple:
 
-- default workspace name: `abel-alpha-workspace`
-- canonical runtime: `<workspace>/.venv`
+- one working area
+- one default workspace: `abel-alpha-workspace`
+- one canonical runtime: `<workspace>/.venv`
 - repeated use should reuse the existing workspace before creating another one
-
-Assume the `abel-alpha` command is already available through the installed
-skill/runtime. User-facing guidance should focus on workspace behavior, not on
-how the repo itself is installed.
 
 Do not improvise:
 
@@ -58,7 +55,7 @@ LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
 # create a workspace at an explicit path and prepare its runtime
-abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"
+abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"  # first use only
 cd "$WORKSPACE_PATH"
 abel-alpha env init
 abel-alpha doctor

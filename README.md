@@ -1,22 +1,37 @@
 # abel-alpha
 
-Workspace-first strategy research for agents.
+Workspace-first strategy research skill for agents.
 
-The current model is intentionally simple:
+Treat `Abel-alpha` as a skill, not as a repo-management task.
+The CLI commands are the tools this skill uses to:
 
-- session owns `discovery.json` and `readiness.json`
-- edge owns the market-data cache
-- branch owns `branch.yaml`
-- `prepare-branch` resolves inputs before a recorded run
+- detect or create a workspace for the current working area
+- prepare that workspace runtime
+- continue the research loop inside that workspace
 
-For normal use, think in terms of one workspace and one runtime:
+For normal use, keep this mental model simple:
 
-- default workspace name: `abel-alpha-workspace`
-- canonical runtime: `<workspace>/.venv`
-- default behavior on repeat entry: reuse the existing workspace before creating another one
+- one working area
+- one default workspace: `abel-alpha-workspace`
+- one canonical runtime: `<workspace>/.venv`
+- reuse the existing workspace before creating another one
 
-This guide assumes the `abel-alpha` command is already available in the current
-agent/runtime environment.
+## Default Behavior
+
+- launch root: the current agent launch directory
+- default workspace path: `<launch_root>/abel-alpha-workspace`
+- explicit creation path: always pass `--path`
+- repeat entry: if the workspace already exists, continue there
+
+## Skill Loop
+
+1. Check whether the current directory is already an Abel workspace.
+2. Otherwise, check whether `<launch_root>/abel-alpha-workspace` already exists.
+3. Reuse that workspace if it exists.
+4. Only create a new workspace when none exists yet, or when the user explicitly asks for another one.
+5. Run `env init` and `doctor`.
+6. Reuse existing `causal-abel` auth if available; only fall back to a new login when needed.
+7. Continue with session, branch, and round work.
 
 ## Standard Flow
 
@@ -24,7 +39,7 @@ agent/runtime environment.
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
-abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"
+abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"  # first use only
 cd "$WORKSPACE_PATH"
 abel-alpha env init
 abel-alpha doctor
@@ -45,38 +60,16 @@ abel-alpha status --session research/tsla/tsla-v1
 abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 ```
 
-## Re-entry
-
-When you return to the same area later:
-
-- if your current directory is already a workspace root, continue there
-- otherwise, if `<current_dir>/abel-alpha-workspace` already exists, reuse it
-- only create a new workspace when no reusable one exists or when you explicitly want a second workspace
-
 After `abel-alpha env init`, the workspace `.venv` is the canonical runtime for
 daily research work.
 
 ## Current Boundaries
 
-### Session artifacts
-
-- `discovery.json`: candidate universe only
-- `readiness.json`: advisory coverage report only
-- session `backtest_start`: default research target, not a mandatory branch runtime start
-
-### Branch artifacts
-
+- session owns `discovery.json` and `readiness.json`
 - `branch.yaml`: target, requested start, overlap mode, selected drivers
-- `inputs/dependencies.json`: prepared input/cache view
-- `engine.py`: signal implementation
-
-### Runtime
-
-`run-branch` should use prepared branch inputs. It is not the place to invent
-the branch definition.
-
-`promote-branch` currently creates a clean promotion bundle, not a full formal
-strategy scaffold.
+- edge owns the market-data cache
+- `prepare-branch` resolves inputs before a recorded run
+- `run-branch` should use prepared branch inputs, not invent the branch definition at runtime
 
 ## Rules For Agents
 
@@ -101,7 +94,6 @@ rerun `doctor`. `causal-edge login` remains the standalone fallback when no
 reusable auth is available.
 
 ## References
-
 - `references/experiment-loop.md`
 - `references/discovery-protocol.md`
 - `references/constraints.md`
