@@ -51,7 +51,8 @@ def init_workspace_env(
     workspace_root = find_workspace_root(start)
     if workspace_root is None:
         raise RuntimeError(
-            "No Abel-alpha workspace found. Run `abel-alpha workspace init <name>` first."
+            "No Abel-alpha workspace found. Run "
+            "`abel-alpha workspace bootstrap --path /path/to/abel-alpha-workspace` first."
         )
 
     manifest = load_workspace_manifest(workspace_root)

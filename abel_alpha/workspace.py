@@ -9,6 +9,7 @@ import yaml
 
 MANIFEST_NAME = "alpha.workspace.yaml"
 DEFAULT_EDGE_SPEC = "git+https://github.com/Abel-ai-causality/Abel-edge.git@main"
+DEFAULT_WORKSPACE_NAME = "abel-alpha-workspace"
 
 
 def find_workspace_root(start: Path | None = None) -> Path | None:
@@ -77,15 +78,25 @@ def resolve_edge_spec(root: Path, manifest: dict | None = None) -> str:
     return configured or DEFAULT_EDGE_SPEC
 
 
-def scaffold_workspace(name: str, *, target_root: Path | None = None) -> Path:
+def scaffold_workspace(
+    name: str,
+    *,
+    target_root: Path | None = None,
+    allow_existing_empty: bool = False,
+) -> Path:
     """Create a new Abel-alpha workspace directory with the standard layout."""
     root = (target_root or Path.cwd() / name).resolve()
     if root.exists():
-        raise FileExistsError(
-            f"Directory '{root}' already exists. Choose a different workspace name or path."
-        )
-
-    root.mkdir(parents=True)
+        if not root.is_dir():
+            raise FileExistsError(
+                f"Path '{root}' already exists and is not a directory."
+            )
+        if not allow_existing_empty or any(root.iterdir()):
+            raise FileExistsError(
+                f"Directory '{root}' already exists. Choose a different workspace name or path."
+            )
+    else:
+        root.mkdir(parents=True)
     manifest = build_default_manifest(name=name)
     resolved = resolve_workspace_paths(root, manifest)
     for key in ("docs_root", "research_root", "cache_root", "logs_root"):
@@ -185,7 +196,6 @@ this workspace.
 ## Standard Flow
 
 ```bash
-abel-alpha env init
 abel-alpha doctor
 {default_activate_command()}
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
@@ -210,8 +220,10 @@ abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "basel
 - `prepare-branch` should run before a recorded round
 - session `backtest_start` is a default target; branch `requested_start` can override it explicitly
 
-If your environment cannot create a new venv, point alpha at an existing
-interpreter with `abel-alpha env init --runtime-python /path/to/python`.
+If the workspace runtime is missing or you want to replace it, run
+`abel-alpha env init` again. If your environment cannot create a new venv,
+point alpha at an existing interpreter with
+`abel-alpha env init --runtime-python /path/to/python`.
 
 ## Readiness gate
 
@@ -240,7 +252,6 @@ abel-alpha doctor
 
 ### Start a new exploration session
 ```bash
-abel-alpha env init
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1

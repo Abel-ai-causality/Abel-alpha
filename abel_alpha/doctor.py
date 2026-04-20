@@ -42,7 +42,10 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
             },
-            "next_step": "abel-alpha workspace init <name>",
+            "next_step": (
+                "abel-alpha workspace bootstrap --path "
+                "/path/to/abel-alpha-workspace"
+            ),
         }
 
     try:

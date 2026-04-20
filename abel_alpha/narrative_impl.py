@@ -24,8 +24,10 @@ from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
 from abel_alpha.edge_runtime import build_workspace_runtime_env
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
+    DEFAULT_WORKSPACE_NAME,
     build_default_manifest,
     default_activate_command,
+    is_workspace_root,
     find_workspace_root,
     load_workspace_manifest,
     resolve_workspace_env_file,
@@ -154,12 +156,61 @@ def main() -> int:
     workspace = sub.add_parser("workspace", help="Create or inspect an Abel-alpha workspace")
     workspace_sub = workspace.add_subparsers(dest="workspace_command", required=True)
 
-    workspace_init = workspace_sub.add_parser("init", help="Create a new workspace scaffold")
+    workspace_init = workspace_sub.add_parser(
+        "init",
+        help="Create a new workspace scaffold without preparing the runtime",
+    )
     workspace_init.add_argument("name", help="Workspace directory name")
     workspace_init.add_argument(
         "--path",
+        required=True,
+        help="Explicit workspace directory path",
+    )
+
+    workspace_bootstrap = workspace_sub.add_parser(
+        "bootstrap",
+        help="Create or reuse a workspace, prepare its runtime, and run doctor",
+    )
+    workspace_bootstrap.add_argument(
+        "--path",
+        required=True,
+        help="Explicit workspace directory path",
+    )
+    workspace_bootstrap.add_argument(
+        "--name",
+        default=DEFAULT_WORKSPACE_NAME,
+        help=f"Workspace name recorded in the manifest (defaults to {DEFAULT_WORKSPACE_NAME})",
+    )
+    workspace_bootstrap.add_argument(
+        "--python",
+        dest="base_python",
         default=None,
-        help="Explicit workspace directory path (defaults to ./<name>)",
+        help="Base interpreter used to create the workspace venv",
+    )
+    workspace_bootstrap.add_argument(
+        "--alpha-source",
+        default=None,
+        help="Local Abel-alpha source tree used for installation",
+    )
+    workspace_bootstrap.add_argument(
+        "--edge-spec",
+        default=None,
+        help="Pip-installable Abel-edge target (defaults to the workspace GitHub main spec)",
+    )
+    workspace_bootstrap.add_argument(
+        "--edge-source",
+        default=None,
+        help="Optional local Abel-edge source tree override for development",
+    )
+    workspace_bootstrap.add_argument(
+        "--runtime-python",
+        default=None,
+        help="Use an existing interpreter instead of creating the workspace venv",
+    )
+    workspace_bootstrap.add_argument(
+        "--no-editable",
+        action="store_true",
+        help="Install Abel-alpha from local source in regular mode instead of editable mode",
     )
 
     workspace_status = workspace_sub.add_parser("status", help="Show current workspace status")
@@ -505,7 +556,7 @@ def main() -> int:
 
 def handle_workspace_command(args: argparse.Namespace) -> int:
     if args.workspace_command == "init":
-        target_root = Path(args.path).expanduser() if args.path else None
+        target_root = Path(args.path).expanduser()
         root = scaffold_workspace(args.name, target_root=target_root)
         manifest = build_default_manifest(args.name)
         resolved = resolve_workspace_paths(root, manifest)
@@ -521,9 +572,79 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print("Next:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
-        print("  abel-alpha env init  # create the workspace runtime")
-        print("  abel-alpha doctor")
+        print(f"  abel-alpha workspace bootstrap --path {root}")
         return 0
+    if args.workspace_command == "bootstrap":
+        target_root = Path(args.path).expanduser().resolve()
+        reused_workspace = False
+        if target_root.exists():
+            if not is_workspace_root(target_root):
+                if target_root.is_dir() and not any(target_root.iterdir()):
+                    root = scaffold_workspace(
+                        args.name,
+                        target_root=target_root,
+                        allow_existing_empty=True,
+                    )
+                else:
+                    print(
+                        "Cannot bootstrap into an existing non-workspace directory: "
+                        f"{target_root}"
+                    )
+                    print(
+                        "Choose an empty path or an existing Abel-alpha workspace root."
+                    )
+                    return 1
+            else:
+                root = target_root
+                reused_workspace = True
+        else:
+            root = scaffold_workspace(args.name, target_root=target_root)
+
+        manifest = load_workspace_manifest(root)
+        resolved = resolve_workspace_paths(root, manifest)
+        env_result = init_workspace_env(
+            start=root,
+            base_python=args.base_python,
+            alpha_source=args.alpha_source,
+            edge_spec=args.edge_spec,
+            edge_source=args.edge_source,
+            runtime_python=args.runtime_python,
+            alpha_editable=not args.no_editable,
+        )
+        doctor_result = run_doctor(root)
+
+        print(
+            ("Reusing" if reused_workspace else "Created")
+            + f" Abel-alpha workspace at {root}"
+        )
+        print(f"  manifest: {root / 'alpha.workspace.yaml'}")
+        print(f"  canonical_runtime_python: {env_result.python_path}")
+        print(f"  activation: {default_activate_command()}")
+        print(f"  runtime_mode: {env_result.runtime_mode}")
+        print(f"  venv_provider: {env_result.venv_provider}")
+        print(f"  edge_install_mode: {env_result.edge_install_mode}")
+        print(f"  edge_install_target: {env_result.edge_install_target}")
+        print(f"  alpha_install_mode: {'editable' if env_result.alpha_editable else 'regular'}")
+        print(
+            "  workspace_reuse: "
+            + ("reused_existing_root" if reused_workspace else "created_new_root")
+        )
+        print(f"  research: {resolved['research_root']}")
+        print(f"  docs: {resolved['docs_root']}")
+        print("")
+        print(render_doctor_report(doctor_result))
+        print("")
+        print("Next:")
+        if doctor_exit_code(doctor_result) == 0:
+            print(f"  cd {root}")
+            print(f"  {default_activate_command()}")
+            print("  abel-alpha init-session --ticker <TICKER> --exp-id <session-id>")
+        else:
+            print(f"  cd {root}")
+            next_step = str(doctor_result.get("next_step") or "").strip()
+            if next_step:
+                print(f"  {next_step}")
+        return doctor_exit_code(doctor_result)
     if args.workspace_command == "status":
         start = Path(args.path).expanduser().resolve()
         root = find_workspace_root(start)

@@ -19,22 +19,36 @@ hypotheses, and faster compounding from one round to the next.
 - default workspace path: `<launch_root>/abel-alpha-workspace`
 - canonical runtime: `<workspace>/.venv`
 - repeated use: reuse the existing workspace before creating another one
+- system Python should only matter for the first establishment step
 
-## Core Flow
+## First Use And Re-entry
+
+On first use in a new working area, the right move is to establish the default
+workspace and let it create its own runtime. If only system Python is
+available, use the thin bootstrap entrypoint:
 
 ```bash
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
-abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"  # first use only
+python scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+```
+
+After that, the workspace should take over. Re-enter the workspace and continue
+there with its own CLI and `.venv`:
+
+```bash
 cd "$WORKSPACE_PATH"
-abel-alpha env init
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
+
+If the CLI is already available before the first workspace exists, `abel-alpha
+workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path, but
+it is not the main mental model.
 
 If auth is needed, reuse existing `causal-abel` auth first. Only fall back to a
 new login when reusable auth is unavailable.

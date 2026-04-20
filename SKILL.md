@@ -41,6 +41,7 @@ Keep the mental model simple:
 - one default workspace: `abel-alpha-workspace`
 - one canonical runtime: `<workspace>/.venv`
 - repeated use should reuse the existing workspace before creating another one
+- system Python matters only long enough to establish the workspace once
 
 Do not improvise:
 
@@ -67,15 +68,26 @@ Use this auth order:
 2. reuse available `causal-abel` auth
 3. only if reusable auth is unavailable, complete a new login
 
-Use this default tool flow:
+Think about the workflow in two phases, not one long command list.
+
+On first contact with a new working area, the job is simply to establish the
+workspace. If the default workspace does not exist yet, start there with system
+Python and let Abel-alpha provision the real runtime inside the workspace:
 
 ```bash
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+python /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+```
 
-abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"  # first use only
+That is the setup moment, not the day-to-day loop.
+
+Once the workspace exists, shift your attention into that directory and treat
+its `abel-alpha` CLI and `.venv` as the normal place to continue research. The
+ongoing flow should feel like continuation, not repeated setup:
+
+```bash
 cd "$WORKSPACE_PATH"
-abel-alpha env init
 abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
@@ -83,7 +95,12 @@ abel-alpha prepare-branch --branch research/<ticker>/<exp-id>/branches/<branch-i
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 ```
 
-When you reuse an existing workspace, tell the user explicitly.
+If the packaged CLI is already available before first use, `abel-alpha
+workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path. It
+is not the main story. The main story is: establish the workspace once, then
+work from inside it.
+
+When you reuse an existing workspace, say so explicitly.
 When auth is needed and an authorization URL appears, tell the user
 immediately. Do not silently wait in the terminal without surfacing the URL.
 

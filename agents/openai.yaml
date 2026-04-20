@@ -1,10 +1,11 @@
 interface:
   display_name: "Abel Alpha"
-  short_description: "Causal-first, reuse-first workspace research skill."
+  short_description: "Bootstrap-first, reuse-first causal workspace research skill."
   default_prompt: >
-    Use $abel-alpha to detect, reuse, or create the default Abel workspace for
-    the current launch root, always use an explicit workspace path when
-    creating, prepare the workspace runtime, reuse existing auth before
-    starting a new login, and treat Abel causal discovery as the opening prior
-    that narrows search and improves compounding while continuing the session,
-    branch, and round workflow through the Abel-alpha CLI tools.
+    Use $abel-alpha to establish or continue the default Abel workspace for
+    the current launch root. On first use, prefer the thin
+    `scripts/bootstrap_workspace.py --path ...` entrypoint so system Python is
+    enough to establish the workspace; after the workspace exists, continue
+    from inside it with the Abel-alpha CLI, explicit paths, auth reuse-first
+    behavior, and Abel causal discovery as the opening prior for narrower,
+    compounding exploration.
