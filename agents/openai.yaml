@@ -1,9 +1,10 @@
 interface:
   display_name: "Abel Alpha"
-  short_description: "Reuse-first Abel workspace research skill."
+  short_description: "Causal-first, reuse-first workspace research skill."
   default_prompt: >
     Use $abel-alpha to detect, reuse, or create the default Abel workspace for
     the current launch root, always use an explicit workspace path when
     creating, prepare the workspace runtime, reuse existing auth before
-    starting a new login, and continue the session, branch, and round workflow
-    with the Abel-alpha CLI tools.
+    starting a new login, and use Abel causal discovery as the default search
+    prior while continuing the session, branch, and round workflow through the
+    Abel-alpha CLI tools.

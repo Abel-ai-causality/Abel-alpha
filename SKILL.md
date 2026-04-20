@@ -5,8 +5,9 @@ description: >
   Use when: the user wants to start or continue an Abel-alpha research workflow
   for an asset, detect or create the default workspace for the current launch
   root, reuse an existing Abel workspace, prepare that workspace runtime, check
-  readiness, reuse existing causal-abel auth when available, or continue the
-  session/branch exploration loop through the Abel-alpha CLI tools.
+  readiness, reuse existing causal-abel auth when available, use Abel causal
+  discovery as the default exploration prior, or continue the session/branch
+  exploration loop through the Abel-alpha CLI tools.
 metadata:
   openclaw:
     requires:
@@ -19,6 +20,18 @@ metadata:
 Use `Abel-alpha` as a workspace-first research skill.
 The CLI commands are the tools this skill uses to get the user into the right
 workspace and continue research there.
+
+The purpose of this skill is not just to run a workflow. Its job is to turn
+Abel's causal graph information into a better exploration prior so strategy
+search becomes more targeted, more compounding, and less like blind feature
+search.
+
+In practice, this skill should help the agent:
+
+- start causal-first instead of scanning a huge undirected space
+- turn discovery into a small explicit branch definition, not a giant candidate dump
+- compound each round inside a persistent workspace instead of restarting from scratch
+- use the CLI as tooling in service of exploration quality, not as the end goal
 
 Keep the mental model simple:
 
