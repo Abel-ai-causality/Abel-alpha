@@ -68,6 +68,12 @@ Use this auth order:
 2. reuse available `causal-abel` auth
 3. only if reusable auth is unavailable, complete a new login
 
+When `doctor` or the next required exploration step reports `auth_missing`,
+treat that as the next workflow transition, not as background troubleshooting.
+If no reusable auth was found, immediately start the explicit auth handoff from
+the workspace runtime and only pause once the authorization URL is ready for
+the user.
+
 Think about the workflow in two phases, not one long command list.
 
 On first contact with a new working area, the job is simply to establish the
@@ -77,7 +83,7 @@ Python and let Abel-alpha provision the real runtime inside the workspace:
 ```bash
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
-python /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+python3 /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
 ```
 
 That is the setup moment, not the day-to-day loop.
@@ -91,12 +97,23 @@ cd "$WORKSPACE_PATH"
 abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
+edit research/<ticker>/<exp-id>/branches/<branch-id>/branch.yaml
 abel-alpha prepare-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
+abel-alpha debug-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 ```
 
 If you re-enter from the parent launch directory instead of the workspace root,
 reuse that same child workspace before creating anything new.
+
+If `abel-alpha doctor` reports `auth_missing`, immediately run the workspace
+runtime's explicit handoff command, surface the URL as soon as it appears, and
+resume the branch flow after authorization succeeds.
+
+Treat the generated `engine.py` as a runnable starter baseline. It is there to
+make the first branch path real and debuggable; once that path is proven, swap
+it for the branch-specific thesis instead of treating the starter baseline as a
+finished idea.
 
 If the packaged CLI is already available before first use, `abel-alpha
 workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path. It

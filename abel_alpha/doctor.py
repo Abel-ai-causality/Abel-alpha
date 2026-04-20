@@ -24,6 +24,11 @@ from abel_alpha.workspace import (
 SUCCESS_STATUSES = {"ready"}
 
 
+def build_auth_handoff_command(python_path: str | Path) -> str:
+    """Return the explicit auth handoff command for the active workspace runtime."""
+    return f"{python_path} -m causal_edge.cli login --json --no-browser"
+
+
 def run_doctor(start: Path | None = None) -> dict[str, object]:
     """Run workspace, environment, edge, and auth readiness checks."""
     start_path = (start or Path.cwd()).resolve()
@@ -148,14 +153,16 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         return result
 
     if not auth_check.get("ok"):
+        handoff_command = build_auth_handoff_command(python_path)
         result.update(
             {
                 "status": "auth_missing",
-                "summary": "Workspace environment is ready, but Abel auth was not detected.",
-                "next_step": (
-                    "Install causal-abel and complete OAuth, or run "
-                    f"`{python_path} -m causal_edge.cli login --json --no-browser`"
+                "summary": (
+                    "Workspace environment is ready, but no reusable Abel auth was detected. "
+                    "Start explicit auth handoff now."
                 ),
+                "auth_handoff_command": handoff_command,
+                "next_step": handoff_command,
             }
         )
         return result
@@ -238,5 +245,8 @@ def render_doctor_report(result: dict[str, object]) -> str:
     auth_scope = result.get("auth_scope")
     if auth_scope:
         lines.append(f"Auth scope: {auth_scope}")
+    auth_handoff_command = result.get("auth_handoff_command")
+    if auth_handoff_command:
+        lines.append(f"Auth handoff command: {auth_handoff_command}")
     lines.append(f"Next step: {result.get('next_step', '')}")
     return "\n".join(lines)

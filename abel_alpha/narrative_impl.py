@@ -20,7 +20,12 @@ from pathlib import Path
 
 import yaml
 
-from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
+from abel_alpha.doctor import (
+    build_auth_handoff_command,
+    doctor_exit_code,
+    render_doctor_report,
+    run_doctor,
+)
 from abel_alpha.edge_runtime import build_workspace_runtime_env
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
@@ -80,7 +85,7 @@ RESULTS_HEADER = [
     "handoff_path",
 ]
 
-ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
+ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Replace the starter baseline when the branch thesis is ready.
 
 Default backtest behavior should follow branch.yaml first and the injected context second.
 If provided, self.context contains workspace/session/branch/discovery/readiness metadata from Abel-alpha.
@@ -99,12 +104,14 @@ Then use StrategyEngine research helpers as thin readers/executors:
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
-do not hide setup failures behind synthetic flat outputs.
+do not hide setup failures behind synthetic outputs.
 Current readiness warning: {readiness_warning}
 Coverage hints: {coverage_hints_text}
 """
  
 from __future__ import annotations
+
+import numpy as np
 
 from causal_edge.engine.base import StrategyEngine
 
@@ -113,41 +120,43 @@ class BranchEngine(StrategyEngine):
     def compute_signals(self):
         target = self.research_target_ticker() or "{ticker}"
         start = self.research_requested_start() or "2020-01-01"
-        branch_spec = (self.context or {{}}).get("branch_spec") or {{}}
-        selected_drivers = branch_spec.get("selected_drivers") or self.research_driver_tickers()
-        # Example paved-road research flow:
-        # bars = self.load_research_bars(
-        #     driver_tickers=selected_drivers,
-        #     limit=600,
-        # )
-        # close_frame = self.research_close_frame(
-        #     driver_tickers=selected_drivers,
-        #     limit=600,
-        # )
-        # target_close, driver_frame = self.research_target_driver_frame(
-        #     driver_tickers=selected_drivers,
-        #     overlap=branch_spec.get("overlap_mode") or "target_only",
-        #     require_drivers=True,
-        #     limit=600,
-        # )
-        # Start target-first, then tighten overlap only if the branch thesis truly needs it.
-        # Build signals from those aligned bars, then return self.finalize_signals(...)
-        readiness = self.research_data_readiness()
-        coverage_hints = readiness.get("coverage_hints") or {{}}
-        target_start = coverage_hints.get("target_safe_start")
-        common_start = coverage_hints.get("dense_overlap_hint_start")
-        raise NotImplementedError(
-            "This branch is still using the default Abel-alpha scaffold. "
-            "Replace the stub in engine.py before recording a real round. "
-            f"requested_start={{start}}; target={{target}}; selected_drivers={{len(selected_drivers)}}; "
-            f"target_safe_start={{target_start or 'n/a'}}; "
-            f"dense_overlap_hint={{common_start or 'n/a'}}. "
-            "Edit branch.yaml first if the default driver selection is not what this branch needs. "
-            "Use `abel-alpha debug-branch` while wiring data helpers if you want a quick dry run."
+        close_frame = self.research_close_frame(
+            driver_tickers=[],
+            include_target=True,
+            require_usable=False,
+            start=start,
+            limit=600,
+        )
+        if target not in close_frame.columns:
+            raise RuntimeError(
+                "The default Abel-alpha baseline could not find target bars for "
+                f"{{target}}. Confirm auth/data access, then rerun `abel-alpha prepare-branch`."
+            )
+        target_close = close_frame[target].dropna()
+        if target_close.empty:
+            raise RuntimeError(
+                "The default Abel-alpha baseline loaded no usable target bars. "
+                "Confirm the requested window in branch.yaml, then rerun "
+                "`abel-alpha prepare-branch`."
+            )
+        # Debug-safe starting point: a simple target-trend starter baseline.
+        # It exists to make the first branch runnable and comparable, not to
+        # pretend that discovery has already been translated into a real edge.
+        slow_mean = target_close.rolling(window=40, min_periods=15).mean()
+        positions = (target_close > slow_mean).astype(float).to_numpy(dtype=float).copy()
+        if len(positions) > 0:
+            positions[0] = 0.0
+        return self.finalize_signals(
+            positions,
+            target_close.index,
+            target_close.to_numpy(dtype=float),
         )
 
     def get_latest_signal(self):
-        return {{"position": 0.0, "date": "not-run"}}
+        positions, dates, _ = self.compute_signals()
+        if len(dates) == 0:
+            return {{"position": 0.0, "date": "not-run"}}
+        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
 '''
 
 
@@ -528,14 +537,14 @@ def main() -> int:
         print("  Confirm branch.yaml before wiring engine.py so target/start/drivers stay explicit.")
         print("  If you fetch bars, pass an explicit `limit=...`.")
         print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
-        print("  Replace the default scaffold stub before recording the first real round.")
+        print("  The default engine is a debug-safe starter baseline; run it once to verify the branch path, then replace it with the branch thesis.")
         print("")
         print("Next:")
         print(f"  edit {branch / BRANCH_SPEC_FILENAME}")
-        print(f"  edit {branch / 'engine.py'}")
         print(f"  abel-alpha prepare-branch --branch {branch}")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
+        print(f"  edit {branch / 'engine.py'}")
         return 0
     if args.command == "prepare-branch":
         return prepare_branch_inputs(args)
@@ -871,9 +880,12 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
     try:
         require_api_key()
     except MissingAbelApiKeyError as exc:
+        python_bin = resolve_default_python_bin(workspace_root or Path.cwd())
         raise RuntimeError(
-            "init-session --discover requires Abel auth before live discovery. "
-            "Install `causal-abel` from `https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills` and complete its OAuth flow, or run `causal-edge login` for the standalone fallback, "
+            "init-session --discover is blocked on Abel auth. "
+            "No reusable auth was found, so start explicit auth handoff now with:\n"
+            f"{build_auth_handoff_command(python_bin)}\n\n"
+            "Surface the URL immediately when it appears, complete authorization, "
             "then retry `abel-alpha init-session --ticker "
             f"{ticker.upper()} --exp-id <exp-id> --discover`."
         ) from exc
@@ -1096,6 +1108,13 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     if not output_path.exists():
         if completed.stdout:
             sys.stderr.write(completed.stdout)
+        runtime_error_text = (completed.stderr or completed.stdout or "").strip()
+        if "Abel API key not found" in runtime_error_text:
+            raise RuntimeError(
+                "Branch preparation is blocked on Abel auth. "
+                "Start explicit auth handoff now with:\n"
+                f"{build_auth_handoff_command(python_bin)}"
+            )
         raise RuntimeError(
             "Abel-edge warm-cache did not produce dependencies output. "
             "Fix the runtime error above before continuing."
@@ -1128,6 +1147,10 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     ]
     warm_ok = [item for item in cache_results if item.get("ok")]
     warm_fail = [item for item in cache_results if not item.get("ok")]
+    auth_handoff_needed = any(
+        "Abel API key not found" in str(item.get("error") or "")
+        for item in warm_fail
+    )
     print(f"Prepared branch inputs: {output_path.relative_to(session)}")
     print(f"  target: {target}")
     print(f"  selected_drivers: {len(selected_drivers)}")
@@ -1142,8 +1165,12 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
             )
     print("")
     print("Next:")
-    print(f"  abel-alpha debug-branch --branch {branch}")
-    print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
+    if auth_handoff_needed:
+        print(f"  {build_auth_handoff_command(python_bin)}")
+        print(f"  abel-alpha prepare-branch --branch {branch}")
+    else:
+        print(f"  abel-alpha debug-branch --branch {branch}")
+        print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
     return completed.returncode
 
 
@@ -2516,8 +2543,9 @@ def session_next_step(
         return (
             f"Create the first branch with "
             f"`abel-alpha init-branch --session {session} --branch-id graph-v1`, "
-            "then edit `branch.yaml`, run `prepare-branch`, and use `debug-branch` "
-            "before recording the first round."
+            "then confirm `branch.yaml`, run the starter baseline through "
+            "`prepare-branch`, `debug-branch`, and `run-branch`, and only then "
+            "replace `engine.py` with the first branch-specific thesis."
         )
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]

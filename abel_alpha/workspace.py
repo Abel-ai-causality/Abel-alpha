@@ -242,6 +242,7 @@ abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "basel
 - edge owns the market-data cache
 - `prepare-branch` should run before a recorded round
 - session `backtest_start` is a default target; branch `requested_start` can override it explicitly
+- the generated `engine.py` is a starter baseline for the first end-to-end run, not a finished branch thesis
 
 If the workspace runtime is missing or you want to replace it, run
 `abel-alpha env init` again. If your environment cannot create a new venv,
@@ -253,7 +254,7 @@ point alpha at an existing interpreter with
 Run `abel-alpha doctor` before opening a session.
 
 - `ready`: you can start research
-- `auth_missing`: first reuse any available `causal-abel` auth, otherwise complete `causal-abel` OAuth or use the standalone edge login fallback
+- `auth_missing`: no reusable auth was found; start the explicit workspace-runtime auth handoff immediately and surface the URL as soon as it appears
 - `env_missing`, `edge_missing`, or `edge_contract_missing`: rerun `abel-alpha env init`
 """
 
@@ -280,13 +281,17 @@ abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
 abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
-Run `doctor` before `init-session`. If it reports `auth_missing`, complete
-any reusable `causal-abel` auth first, otherwise complete `causal-abel` OAuth
-or use the standalone edge login fallback.
+Run `doctor` before `init-session`. If it reports `auth_missing`, move
+immediately into the workspace runtime's explicit auth handoff and surface the
+URL as soon as it appears.
 Treat `branch.yaml` as the branch definition and `prepare-branch` as the
 required pre-run input resolution step.
+Treat the generated `engine.py` as a starter baseline you can run once to
+verify the branch path before replacing it with the branch-specific mechanism.
 Treat session readiness as advisory context; the branch's explicit
 `requested_start` is the runtime start when it is set.
 Treat this workspace `.venv` as the canonical runtime for daily work.

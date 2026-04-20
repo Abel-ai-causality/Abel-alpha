@@ -31,7 +31,7 @@ available, use the thin bootstrap entrypoint:
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
-python scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+python3 scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
 ```
 
 After that, the workspace should take over. Re-enter the workspace and continue
@@ -42,13 +42,24 @@ cd "$WORKSPACE_PATH"
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
+edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
 abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
 If you come back from the parent launch directory instead of the workspace
 root, Abel-alpha should still resolve and reuse that same child workspace
 before it creates anything new.
+
+If `abel-alpha doctor` reports `auth_missing`, that is the next flow
+transition, not just a warning. Use the workspace runtime's explicit auth
+handoff command, surface the URL immediately, then resume the branch flow after
+authorization succeeds.
+
+The first generated `engine.py` is a runnable starter baseline, not a finished
+branch thesis. Use it to verify that prepare/debug/run all work end to end, and
+then replace it with the branch-specific mechanism you actually want to test.
 
 If the CLI is already available before the first workspace exists, `abel-alpha
 workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path, but
