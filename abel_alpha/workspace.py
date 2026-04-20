@@ -26,6 +26,29 @@ def is_workspace_root(path: Path) -> bool:
     return (path / MANIFEST_NAME).exists()
 
 
+def default_workspace_path(start: Path | None = None) -> Path:
+    """Return the default child workspace path for a launch root."""
+    current = (start or Path.cwd()).expanduser().resolve()
+    return current / DEFAULT_WORKSPACE_NAME
+
+
+def resolve_workspace_entry(start: Path | None = None) -> tuple[Path | None, str]:
+    """Resolve workspace re-entry from a workspace root, descendant, or launch root."""
+    current = (start or Path.cwd()).expanduser().resolve()
+    if is_workspace_root(current):
+        return current, "current_workspace_root"
+
+    ancestor = find_workspace_root(current)
+    if ancestor is not None:
+        return ancestor, "workspace_ancestor"
+
+    child = default_workspace_path(current)
+    if is_workspace_root(child):
+        return child, "launch_root_child"
+
+    return None, "missing"
+
+
 def load_workspace_manifest(root: Path) -> dict:
     """Load the workspace manifest from ``root``."""
     manifest_path = root / MANIFEST_NAME

@@ -46,6 +46,10 @@ abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
+If you come back from the parent launch directory instead of the workspace
+root, Abel-alpha should still resolve and reuse that same child workspace
+before it creates anything new.
+
 If the CLI is already available before the first workspace exists, `abel-alpha
 workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path, but
 it is not the main mental model.

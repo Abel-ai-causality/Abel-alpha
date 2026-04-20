@@ -95,6 +95,9 @@ abel-alpha prepare-branch --branch research/<ticker>/<exp-id>/branches/<branch-i
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 ```
 
+If you re-enter from the parent launch directory instead of the workspace root,
+reuse that same child workspace before creating anything new.
+
 If the packaged CLI is already available before first use, `abel-alpha
 workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path. It
 is not the main story. The main story is: establish the workspace once, then

@@ -10,7 +10,8 @@ from shutil import which
 
 from abel_alpha.edge_runtime import probe_edge_context_json, probe_edge_discovery_payload
 from abel_alpha.workspace import (
-    find_workspace_root,
+    default_workspace_path,
+    resolve_workspace_entry,
     load_workspace_manifest,
     resolve_edge_spec,
     resolve_runtime_python,
@@ -48,11 +49,12 @@ def init_workspace_env(
     alpha_editable: bool = True,
 ) -> EnvInitResult:
     """Create the workspace venv and install Abel-alpha plus dependencies."""
-    workspace_root = find_workspace_root(start)
+    workspace_root, _ = resolve_workspace_entry(start)
     if workspace_root is None:
+        target = default_workspace_path(start)
         raise RuntimeError(
             "No Abel-alpha workspace found. Run "
-            "`abel-alpha workspace bootstrap --path /path/to/abel-alpha-workspace` first."
+            f"`abel-alpha workspace bootstrap --path {target}` first."
         )
 
     manifest = load_workspace_manifest(workspace_root)

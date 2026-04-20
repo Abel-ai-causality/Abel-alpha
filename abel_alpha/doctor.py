@@ -12,8 +12,9 @@ from abel_alpha.edge_runtime import (
     probe_edge_discovery_payload,
 )
 from abel_alpha.workspace import (
-    find_workspace_root,
+    default_workspace_path,
     load_workspace_manifest,
+    resolve_workspace_entry,
     resolve_edge_spec,
     resolve_workspace_env_file,
     resolve_runtime_python,
@@ -26,12 +27,18 @@ SUCCESS_STATUSES = {"ready"}
 def run_doctor(start: Path | None = None) -> dict[str, object]:
     """Run workspace, environment, edge, and auth readiness checks."""
     start_path = (start or Path.cwd()).resolve()
-    root = find_workspace_root(start_path)
+    root, resolution_mode = resolve_workspace_entry(start_path)
     if root is None:
         return {
             "status": "workspace_missing",
             "workspace_root": None,
-            "summary": f"No Abel-alpha workspace found at or above {start_path}",
+            "summary": (
+                "No Abel-alpha workspace found from the current entry path and no "
+                f"default child workspace exists at {default_workspace_path(start_path)}"
+            ),
+            "entry_path": str(start_path),
+            "default_workspace_path": str(default_workspace_path(start_path)),
+            "workspace_resolution": resolution_mode,
             "checks": {
                 "workspace_manifest": "fail",
                 "python_env": "not_run",
@@ -44,7 +51,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
             },
             "next_step": (
                 "abel-alpha workspace bootstrap --path "
-                "/path/to/abel-alpha-workspace"
+                f"{default_workspace_path(start_path)}"
             ),
         }
 
@@ -81,6 +88,8 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     }
 
     result: dict[str, object] = {
+        "entry_path": str(start_path),
+        "workspace_resolution": resolution_mode,
         "workspace_root": str(root),
         "python_path": str(python_path),
         "workspace_env_file": str(resolve_workspace_env_file(root)),
@@ -196,6 +205,15 @@ def render_doctor_report(result: dict[str, object]) -> str:
     workspace_root = result.get("workspace_root")
     if workspace_root:
         lines.append(f"Workspace root: {workspace_root}")
+    entry_path = result.get("entry_path")
+    if entry_path:
+        lines.append(f"Entry path: {entry_path}")
+    workspace_resolution = result.get("workspace_resolution")
+    if workspace_resolution:
+        lines.append(f"Workspace resolution: {workspace_resolution}")
+    default_workspace = result.get("default_workspace_path")
+    if default_workspace:
+        lines.append(f"Default workspace path: {default_workspace}")
     python_path = result.get("python_path")
     if python_path:
         lines.append(f"Python path: {python_path}")

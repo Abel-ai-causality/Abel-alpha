@@ -6,6 +6,7 @@ interface:
     the current launch root. On first use, prefer the thin
     `scripts/bootstrap_workspace.py --path ...` entrypoint so system Python is
     enough to establish the workspace; after the workspace exists, continue
-    from inside it with the Abel-alpha CLI, explicit paths, auth reuse-first
-    behavior, and Abel causal discovery as the opening prior for narrower,
-    compounding exploration.
+    from inside it with the Abel-alpha CLI, and when re-entering from the
+    launch root, reuse that same child workspace before creating anything
+    new; keep explicit paths, auth reuse-first behavior, and Abel causal
+    discovery as the opening prior for narrower, compounding exploration.

@@ -26,10 +26,12 @@ from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
     DEFAULT_WORKSPACE_NAME,
     build_default_manifest,
+    default_workspace_path,
     default_activate_command,
     is_workspace_root,
     find_workspace_root,
     load_workspace_manifest,
+    resolve_workspace_entry,
     resolve_workspace_env_file,
     resolve_runtime_python,
     render_workspace_status,
@@ -647,11 +649,18 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         return doctor_exit_code(doctor_result)
     if args.workspace_command == "status":
         start = Path(args.path).expanduser().resolve()
-        root = find_workspace_root(start)
+        root, resolution_mode = resolve_workspace_entry(start)
         if root is None:
-            print(f"No Abel-alpha workspace found at or above {start}")
+            print(f"No Abel-alpha workspace found from entry path {start}")
+            print(f"Default workspace path for this launch root: {default_workspace_path(start)}")
             return 1
         manifest = load_workspace_manifest(root)
+        if resolution_mode == "launch_root_child":
+            print(f"Reusing default workspace under launch root: {root}")
+            print("")
+        elif resolution_mode == "workspace_ancestor":
+            print(f"Continuing from workspace containing {start}: {root}")
+            print("")
         print(render_workspace_status(root, manifest))
         return 0
     return 1
@@ -711,7 +720,7 @@ def resolve_session_root(root_arg: str | None) -> Path:
     """Resolve the session root from an explicit argument or current workspace."""
     if root_arg:
         return resolve_workspace_arg_path(root_arg)
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         manifest = load_workspace_manifest(workspace_root)
         return resolve_workspace_paths(workspace_root, manifest)["research_root"]
@@ -723,7 +732,7 @@ def resolve_workspace_arg_path(value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
         return path
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         return workspace_root / path
     return path
@@ -852,7 +861,7 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
             "Live Abel discovery requires causal-edge with the Abel plugin installed. "
             "Create a virtual environment, install causal-edge, then retry."
         ) from exc
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         os.environ.setdefault(
             "ABEL_AUTH_ENV_FILE",
