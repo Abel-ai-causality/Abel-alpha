@@ -15,24 +15,14 @@ For normal use, think in terms of one workspace and one runtime:
 - canonical runtime: `<workspace>/.venv`
 - default behavior on repeat entry: reuse the existing workspace before creating another one
 
-When you are bootstrapping from an `Abel-alpha` source checkout, the checkout
-`.venv` is only the installer environment for that checkout. After
-`abel-alpha env init`, use the workspace `.venv` as the canonical runtime for
-daily research work.
+This guide assumes the `abel-alpha` command is already available in the current
+agent/runtime environment.
 
 ## Standard Flow
 
 ```bash
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
-
-# Current source-checkout flow:
-# create a temporary installer environment for this checkout, then create the workspace explicitly
-python -m venv .venv
-# PowerShell: .venv\Scripts\Activate.ps1
-# bash/zsh: source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
 
 abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"
 cd "$WORKSPACE_PATH"

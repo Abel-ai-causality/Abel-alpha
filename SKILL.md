@@ -27,9 +27,9 @@ For normal use, think in terms of one workspace and one canonical runtime:
 - canonical runtime: `<workspace>/.venv`
 - repeated use should reuse the existing workspace before creating another one
 
-When you bootstrap from an `Abel-alpha` source checkout, the checkout `.venv`
-is only an installer environment for that checkout. After `abel-alpha env init`,
-the workspace `.venv` becomes the canonical runtime for daily work.
+Assume the `abel-alpha` command is already available through the installed
+skill/runtime. User-facing guidance should focus on workspace behavior, not on
+how the repo itself is installed.
 
 Do not improvise:
 
@@ -57,15 +57,7 @@ Use this default flow:
 LAUNCH_ROOT="$PWD"
 WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
 
-# Current source-checkout flow:
-# create an installer environment for the alpha checkout or installed skill copy
-python -m venv .venv
-# PowerShell: .venv\Scripts\Activate.ps1
-# bash/zsh: source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
-
-# then: create a workspace at an explicit path and prepare its runtime
+# create a workspace at an explicit path and prepare its runtime
 abel-alpha workspace init abel-alpha-workspace --path "$WORKSPACE_PATH"
 cd "$WORKSPACE_PATH"
 abel-alpha env init
@@ -86,9 +78,8 @@ abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -
 abel-alpha status --session research/<ticker>/<exp-id>
 ```
 
-`pip install -e .` belongs to the Abel-alpha source checkout or the locally
-installed skill copy. `abel-alpha env init` prepares the workspace runtime and
-installs `causal-edge` there.
+`abel-alpha env init` prepares the workspace runtime and installs
+`causal-edge` there.
 
 When you reuse an existing workspace, tell the user explicitly. Good examples:
 
