@@ -20,14 +20,23 @@ from pathlib import Path
 
 import yaml
 
-from abel_alpha.doctor import doctor_exit_code, render_doctor_report, run_doctor
+from abel_alpha.doctor import (
+    build_auth_handoff_command,
+    doctor_exit_code,
+    render_doctor_report,
+    run_doctor,
+)
 from abel_alpha.edge_runtime import build_workspace_runtime_env
 from abel_alpha.env import init_workspace_env
 from abel_alpha.workspace import (
+    DEFAULT_WORKSPACE_NAME,
     build_default_manifest,
+    default_workspace_path,
     default_activate_command,
+    is_workspace_root,
     find_workspace_root,
     load_workspace_manifest,
+    resolve_workspace_entry,
     resolve_workspace_env_file,
     resolve_runtime_python,
     render_workspace_status,
@@ -155,7 +164,7 @@ MEMORY_LINKS_HEADER = [
     "origin",
 ]
 
-ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Fill in BranchEngine.compute_signals().
+ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Replace the starter baseline when the branch thesis is ready.
 
 Default backtest behavior should follow branch.yaml first and the injected context second.
 If provided, self.context contains workspace/session/branch/discovery/readiness metadata from Abel-alpha.
@@ -174,12 +183,14 @@ Then use StrategyEngine research helpers as thin readers/executors:
 If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
 Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
-do not hide setup failures behind synthetic flat outputs.
+do not hide setup failures behind synthetic outputs.
 Current readiness warning: {readiness_warning}
 Coverage hints: {coverage_hints_text}
 """
  
 from __future__ import annotations
+
+import numpy as np
 
 from causal_edge.engine.base import StrategyEngine
 
@@ -188,41 +199,43 @@ class BranchEngine(StrategyEngine):
     def compute_signals(self):
         target = self.research_target_ticker() or "{ticker}"
         start = self.research_requested_start() or "2020-01-01"
-        branch_spec = (self.context or {{}}).get("branch_spec") or {{}}
-        selected_drivers = branch_spec.get("selected_drivers") or self.research_driver_tickers()
-        # Example paved-road research flow:
-        # bars = self.load_research_bars(
-        #     driver_tickers=selected_drivers,
-        #     limit=600,
-        # )
-        # close_frame = self.research_close_frame(
-        #     driver_tickers=selected_drivers,
-        #     limit=600,
-        # )
-        # target_close, driver_frame = self.research_target_driver_frame(
-        #     driver_tickers=selected_drivers,
-        #     overlap=branch_spec.get("overlap_mode") or "target_only",
-        #     require_drivers=True,
-        #     limit=600,
-        # )
-        # Start target-first, then tighten overlap only if the branch thesis truly needs it.
-        # Build signals from those aligned bars, then return self.finalize_signals(...)
-        readiness = self.research_data_readiness()
-        coverage_hints = readiness.get("coverage_hints") or {{}}
-        target_start = coverage_hints.get("target_safe_start")
-        common_start = coverage_hints.get("dense_overlap_hint_start")
-        raise NotImplementedError(
-            "This branch is still using the default Abel-alpha scaffold. "
-            "Replace the stub in engine.py before recording a real round. "
-            f"requested_start={{start}}; target={{target}}; selected_drivers={{len(selected_drivers)}}; "
-            f"target_safe_start={{target_start or 'n/a'}}; "
-            f"dense_overlap_hint={{common_start or 'n/a'}}. "
-            "Edit branch.yaml first if the default driver selection is not what this branch needs. "
-            "Use `abel-alpha debug-branch` while wiring data helpers if you want a quick dry run."
+        close_frame = self.research_close_frame(
+            driver_tickers=[],
+            include_target=True,
+            require_usable=False,
+            start=start,
+            limit=600,
+        )
+        if target not in close_frame.columns:
+            raise RuntimeError(
+                "The default Abel-alpha baseline could not find target bars for "
+                f"{{target}}. Confirm auth/data access, then rerun `abel-alpha prepare-branch`."
+            )
+        target_close = close_frame[target].dropna()
+        if target_close.empty:
+            raise RuntimeError(
+                "The default Abel-alpha baseline loaded no usable target bars. "
+                "Confirm the requested window in branch.yaml, then rerun "
+                "`abel-alpha prepare-branch`."
+            )
+        # Debug-safe starting point: a simple target-trend starter baseline.
+        # It exists to make the first branch runnable and comparable, not to
+        # pretend that discovery has already been translated into a real edge.
+        slow_mean = target_close.rolling(window=40, min_periods=15).mean()
+        positions = (target_close > slow_mean).astype(float).to_numpy(dtype=float).copy()
+        if len(positions) > 0:
+            positions[0] = 0.0
+        return self.finalize_signals(
+            positions,
+            target_close.index,
+            target_close.to_numpy(dtype=float),
         )
 
     def get_latest_signal(self):
-        return {{"position": 0.0, "date": "not-run"}}
+        positions, dates, _ = self.compute_signals()
+        if len(dates) == 0:
+            return {{"position": 0.0, "date": "not-run"}}
+        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
 '''
 
 
@@ -233,12 +246,61 @@ def main() -> int:
     workspace = sub.add_parser("workspace", help="Create or inspect an Abel-alpha workspace")
     workspace_sub = workspace.add_subparsers(dest="workspace_command", required=True)
 
-    workspace_init = workspace_sub.add_parser("init", help="Create a new workspace scaffold")
+    workspace_init = workspace_sub.add_parser(
+        "init",
+        help="Create a new workspace scaffold without preparing the runtime",
+    )
     workspace_init.add_argument("name", help="Workspace directory name")
     workspace_init.add_argument(
         "--path",
+        required=True,
+        help="Explicit workspace directory path",
+    )
+
+    workspace_bootstrap = workspace_sub.add_parser(
+        "bootstrap",
+        help="Create or reuse a workspace, prepare its runtime, and run doctor",
+    )
+    workspace_bootstrap.add_argument(
+        "--path",
+        required=True,
+        help="Explicit workspace directory path",
+    )
+    workspace_bootstrap.add_argument(
+        "--name",
+        default=DEFAULT_WORKSPACE_NAME,
+        help=f"Workspace name recorded in the manifest (defaults to {DEFAULT_WORKSPACE_NAME})",
+    )
+    workspace_bootstrap.add_argument(
+        "--python",
+        dest="base_python",
         default=None,
-        help="Explicit workspace directory path (defaults to ./<name>)",
+        help="Base interpreter used to create the workspace venv",
+    )
+    workspace_bootstrap.add_argument(
+        "--alpha-source",
+        default=None,
+        help="Local Abel-alpha source tree used for installation",
+    )
+    workspace_bootstrap.add_argument(
+        "--edge-spec",
+        default=None,
+        help="Pip-installable Abel-edge target (defaults to the workspace GitHub main spec)",
+    )
+    workspace_bootstrap.add_argument(
+        "--edge-source",
+        default=None,
+        help="Optional local Abel-edge source tree override for development",
+    )
+    workspace_bootstrap.add_argument(
+        "--runtime-python",
+        default=None,
+        help="Use an existing interpreter instead of creating the workspace venv",
+    )
+    workspace_bootstrap.add_argument(
+        "--no-editable",
+        action="store_true",
+        help="Install Abel-alpha from local source in regular mode instead of editable mode",
     )
 
     workspace_status = workspace_sub.add_parser("status", help="Show current workspace status")
@@ -521,7 +583,7 @@ def main() -> int:
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
         return 0
     if args.command == "set-backtest-start":
@@ -549,7 +611,7 @@ def main() -> int:
         if warning:
             print(f"  warning: {warning}")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha status --session {session}")
         return 0
     if args.command == "set-hypothesis":
@@ -581,7 +643,7 @@ def main() -> int:
         print(f"Updated branch hypothesis for {branch}")
         print(f"  hypothesis: {hypothesis}")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
@@ -607,18 +669,27 @@ def main() -> int:
             for line in readiness_recommendation_lines(readiness):
                 print(f"  coverage_hint: {line}")
         print("")
-        print("Reminders:")
-        print("  Confirm branch.yaml before wiring engine.py so target/start/drivers stay explicit.")
-        print("  If you fetch bars, pass an explicit `limit=...`.")
-        print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
-        print("  Replace the default scaffold stub before recording the first real round.")
+        render_section(
+            "Branch context",
+            branch_context_summary_lines(
+                branch=branch,
+                session=session,
+                discovery=discovery,
+                readiness=readiness,
+            ),
+        )
         print("")
-        print("Next:")
+        print("What matters now:")
+        print("  branch.yaml is where target, start, drivers, and overlap become explicit.")
+        print("  The generated engine is only a starter path check; it helps you verify the branch wiring before you encode a branch-specific mechanism.")
+        print("  If you fetch bars, keep `limit=...` explicit and avoid blanket `dropna()` before confirming the target column survives.")
+        print("")
+        print("From here:")
         print(f"  edit {branch / BRANCH_SPEC_FILENAME}")
-        print(f"  edit {branch / 'engine.py'}")
         print(f"  abel-alpha prepare-branch --branch {branch}")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
+        print(f"  edit {branch / 'engine.py'}")
         return 0
     if args.command == "prepare-branch":
         return prepare_branch_inputs(args)
@@ -641,7 +712,7 @@ def main() -> int:
 
 def handle_workspace_command(args: argparse.Namespace) -> int:
     if args.workspace_command == "init":
-        target_root = Path(args.path).expanduser() if args.path else None
+        target_root = Path(args.path).expanduser()
         root = scaffold_workspace(args.name, target_root=target_root)
         manifest = build_default_manifest(args.name)
         resolved = resolve_workspace_paths(root, manifest)
@@ -649,20 +720,106 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print(f"  manifest: {root / 'alpha.workspace.yaml'}")
         print(f"  research: {resolved['research_root']}")
         print(f"  docs: {resolved['docs_root']}")
+        print(
+            "  planned_workspace_python: "
+            f"{resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}"
+        )
         print("")
-        print("Next:")
+        print("Boundary:")
+        print("  This workspace is for alpha-managed branch research.")
+        print("  Keep research artifacts under `research/`.")
+        print("  If you need a standalone Abel-edge project, create it outside this workspace.")
+        print("")
+        print("From here:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
-        print("  abel-alpha env init")
-        print("  abel-alpha doctor")
+        print(f"  abel-alpha workspace bootstrap --path {root}")
         return 0
+    if args.workspace_command == "bootstrap":
+        target_root = Path(args.path).expanduser().resolve()
+        reused_workspace = False
+        if target_root.exists():
+            if not is_workspace_root(target_root):
+                if target_root.is_dir() and not any(target_root.iterdir()):
+                    root = scaffold_workspace(
+                        args.name,
+                        target_root=target_root,
+                        allow_existing_empty=True,
+                    )
+                else:
+                    print(
+                        "Cannot bootstrap into an existing non-workspace directory: "
+                        f"{target_root}"
+                    )
+                    print(
+                        "Choose an empty path or an existing Abel-alpha workspace root."
+                    )
+                    return 1
+            else:
+                root = target_root
+                reused_workspace = True
+        else:
+            root = scaffold_workspace(args.name, target_root=target_root)
+
+        manifest = load_workspace_manifest(root)
+        resolved = resolve_workspace_paths(root, manifest)
+        env_result = init_workspace_env(
+            start=root,
+            base_python=args.base_python,
+            alpha_source=args.alpha_source,
+            edge_spec=args.edge_spec,
+            edge_source=args.edge_source,
+            runtime_python=args.runtime_python,
+            alpha_editable=not args.no_editable,
+        )
+        doctor_result = run_doctor(root)
+
+        print(
+            ("Reusing" if reused_workspace else "Created")
+            + f" Abel-alpha workspace at {root}"
+        )
+        print(f"  manifest: {root / 'alpha.workspace.yaml'}")
+        print(f"  canonical_runtime_python: {env_result.python_path}")
+        print(f"  activation: {default_activate_command()}")
+        print(f"  runtime_mode: {env_result.runtime_mode}")
+        print(f"  venv_provider: {env_result.venv_provider}")
+        print(f"  edge_install_mode: {env_result.edge_install_mode}")
+        print(f"  edge_install_target: {env_result.edge_install_target}")
+        print(f"  alpha_install_mode: {'editable' if env_result.alpha_editable else 'regular'}")
+        print(
+            "  workspace_reuse: "
+            + ("reused_existing_root" if reused_workspace else "created_new_root")
+        )
+        print(f"  research: {resolved['research_root']}")
+        print(f"  docs: {resolved['docs_root']}")
+        print("")
+        print(render_doctor_report(doctor_result))
+        print("")
+        print("From here:")
+        if doctor_exit_code(doctor_result) == 0:
+            print(f"  cd {root}")
+            print(f"  {default_activate_command()}")
+            print("  abel-alpha init-session --ticker <TICKER> --exp-id <session-id>")
+        else:
+            print(f"  cd {root}")
+            next_step = str(doctor_result.get("next_step") or "").strip()
+            if next_step:
+                print(f"  {next_step}")
+        return doctor_exit_code(doctor_result)
     if args.workspace_command == "status":
         start = Path(args.path).expanduser().resolve()
-        root = find_workspace_root(start)
+        root, resolution_mode = resolve_workspace_entry(start)
         if root is None:
-            print(f"No Abel-alpha workspace found at or above {start}")
+            print(f"No Abel-alpha workspace found from entry path {start}")
+            print(f"Default workspace path for this launch root: {default_workspace_path(start)}")
             return 1
         manifest = load_workspace_manifest(root)
+        if resolution_mode == "launch_root_child":
+            print(f"Reusing default workspace under launch root: {root}")
+            print("")
+        elif resolution_mode == "workspace_ancestor":
+            print(f"Continuing from workspace containing {start}: {root}")
+            print("")
         print(render_workspace_status(root, manifest))
         return 0
     return 1
@@ -690,8 +847,9 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print(f"  edge_install_target: {result.edge_install_target}")
     print(f"  alpha_install_mode: {'editable' if result.alpha_editable else 'regular'}")
     print("  alpha_install_reason: installs the packaged abel-alpha CLI into this workspace runtime")
+    print("  canonical_runtime_note: use this workspace runtime as the canonical environment for daily research work")
     if result.runtime_mode == "existing_python":
-        print("  runtime_note: using an existing interpreter instead of creating the workspace .venv")
+        print("  runtime_override_note: using an existing interpreter instead of creating the workspace .venv")
     if result.edge_discovery_payload_capable is not None:
         print(f"  edge_discovery_payload: {'yes' if result.edge_discovery_payload_capable else 'no'}")
     if result.edge_context_json_capable is not None:
@@ -702,9 +860,10 @@ def handle_env_command(args: argparse.Namespace) -> int:
         print("  Installed Abel-edge is missing required alpha contracts.")
         print("  Run `abel-alpha doctor` and upgrade the workspace runtime before starting research.")
         print("")
-    print("Next:")
+    print("From here:")
     print("  abel-alpha doctor")
     print(f"  {default_activate_command()}")
+    print("  # once doctor is ready: init-session -> init-branch -> edit branch.yaml -> prepare-branch")
     return 0
 
 
@@ -721,7 +880,7 @@ def resolve_session_root(root_arg: str | None) -> Path:
     """Resolve the session root from an explicit argument or current workspace."""
     if root_arg:
         return resolve_workspace_arg_path(root_arg)
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         manifest = load_workspace_manifest(workspace_root)
         return resolve_workspace_paths(workspace_root, manifest)["research_root"]
@@ -733,7 +892,7 @@ def resolve_workspace_arg_path(value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
         return path
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         return workspace_root / path
     return path
@@ -862,7 +1021,7 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
             "Live Abel discovery requires causal-edge with the Abel plugin installed. "
             "Create a virtual environment, install causal-edge, then retry."
         ) from exc
-    workspace_root = find_workspace_root()
+    workspace_root, _ = resolve_workspace_entry()
     if workspace_root is not None:
         os.environ.setdefault(
             "ABEL_AUTH_ENV_FILE",
@@ -872,9 +1031,12 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
     try:
         require_api_key()
     except MissingAbelApiKeyError as exc:
+        python_bin = resolve_default_python_bin(workspace_root or Path.cwd())
         raise RuntimeError(
-            "init-session --discover requires Abel auth before live discovery. "
-            "Install `causal-abel` from `https://github.com/Abel-ai-causality/Abel-skills/tree/main/skills` and complete its OAuth flow, or run `causal-edge login` for the standalone fallback, "
+            "init-session --discover is blocked on Abel auth. "
+            "No reusable auth was found, so start explicit auth handoff now with:\n"
+            f"{build_auth_handoff_command(python_bin)}\n\n"
+            "Surface the URL immediately when it appears, complete authorization, "
             "then retry `abel-alpha init-session --ticker "
             f"{ticker.upper()} --exp-id <exp-id> --discover`."
         ) from exc
@@ -1147,6 +1309,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     session = branch.parent.parent
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
+    readiness = load_readiness(session)
     branch_spec = load_branch_spec(branch)
     if not branch_spec:
         raise RuntimeError(f"Missing {BRANCH_SPEC_FILENAME} under {branch}")
@@ -1170,7 +1333,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     advisory_lines = branch_runtime_advisory_lines(
         branch_requested_start=requested_start,
         discovery=discovery,
-        readiness=load_readiness(session),
+        readiness=readiness,
     )
     dependencies = branch_dependencies_payload(
         branch=branch,
@@ -1218,6 +1381,13 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     if not output_path.exists():
         if completed.stdout:
             sys.stderr.write(completed.stdout)
+        runtime_error_text = (completed.stderr or completed.stdout or "").strip()
+        if "Abel API key not found" in runtime_error_text:
+            raise RuntimeError(
+                "Branch preparation is blocked on Abel auth. "
+                "Start explicit auth handoff now with:\n"
+                f"{build_auth_handoff_command(python_bin)}"
+            )
         raise RuntimeError(
             "Abel-edge warm-cache did not produce dependencies output. "
             "Fix the runtime error above before continuing."
@@ -1250,6 +1420,10 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     ]
     warm_ok = [item for item in cache_results if item.get("ok")]
     warm_fail = [item for item in cache_results if not item.get("ok")]
+    auth_handoff_needed = any(
+        "Abel API key not found" in str(item.get("error") or "")
+        for item in warm_fail
+    )
     print(f"Prepared branch inputs: {output_path.relative_to(session)}")
     print(f"  target: {target}")
     print(f"  selected_drivers: {len(selected_drivers)}")
@@ -1262,10 +1436,24 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
             print(
                 f"  cache_failure: {item.get('symbol', 'unknown')} -> {item.get('error', 'unknown')}"
             )
+    render_section(
+        "Prepared branch state",
+        branch_context_summary_lines(
+            branch=branch,
+            session=session,
+            discovery=discovery,
+            readiness=readiness,
+        ),
+    )
     print("")
-    print("Next:")
-    print(f"  abel-alpha debug-branch --branch {branch}")
-    print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
+    print("From here:")
+    if auth_handoff_needed:
+        print(f"  {build_auth_handoff_command(python_bin)}")
+        print(f"  abel-alpha prepare-branch --branch {branch}")
+    else:
+        print("  The branch inputs are ready; use debug to inspect the current mechanism, or record a round once the engine reflects the branch thesis.")
+        print(f"  abel-alpha debug-branch --branch {branch}")
+        print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
     return completed.returncode
 
 
@@ -1353,12 +1541,23 @@ def run_branch_round(args: argparse.Namespace) -> int:
     warning = build_readiness_warning(readiness)
     if branch_uses_default_scaffold(branch, discovery, readiness, session) and not args.allow_untouched_template:
         print(
-            "Refusing to record a round from the untouched default engine scaffold. "
-            "Edit engine.py first, or use `abel-alpha debug-branch` while wiring the first real signal.",
+            "The branch is still using the untouched starter scaffold. "
+            "That starter path is useful for checking wiring, but round-001 should reflect a branch-specific mechanism.",
+            file=sys.stderr,
+        )
+        print(
+            "Interpretation: workflow_boundary -> the branch is ready for a mechanism decision, not another setup step.",
             file=sys.stderr,
         )
         for line in advisory_lines:
             print(f"Runtime context: {line}", file=sys.stderr)
+        for line in branch_context_summary_lines(
+            branch=branch,
+            session=session,
+            discovery=discovery,
+            readiness=readiness,
+        ):
+            print(f"Branch context: {line}", file=sys.stderr)
         if warning and backtest_start == _get_backtest_start(discovery):
             print(f"Readiness warning: {warning}", file=sys.stderr)
         for line in readiness_recommendation_lines(readiness):
@@ -1553,6 +1752,14 @@ def run_branch_round(args: argparse.Namespace) -> int:
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
     print(f"Edge handoff: {handoff_path.relative_to(session)}")
+    frame_key, frame_text = classify_result_frame(result)
+    render_section(
+        "Interpretation",
+        [
+            f"result_class={frame_key}",
+            frame_text,
+        ],
+    )
     return 0
 
 
@@ -1626,6 +1833,20 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     sys.stderr.write(completed.stderr)
     for line in advisory_lines:
         print(f"Runtime context: {line}")
+    if debug_result_path.exists():
+        try:
+            debug_result = json.loads(debug_result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            debug_result = {}
+        if isinstance(debug_result, dict) and debug_result:
+            frame_key, frame_text = classify_result_frame(debug_result)
+            render_section(
+                "Interpretation",
+                [
+                    f"result_class={frame_key}",
+                    frame_text,
+                ],
+            )
     print(f"Debug context: {context_path.relative_to(session)}")
     if debug_result_path.exists():
         print(f"Debug result: {debug_result_path.relative_to(session)}")
@@ -3142,6 +3363,124 @@ def branch_runtime_advisory_lines(
     return lines
 
 
+def _branch_driver_list(branch_spec: dict) -> list[str]:
+    return [
+        str(item).strip().upper()
+        for item in (branch_spec.get("selected_drivers") or [])
+        if str(item).strip()
+    ]
+
+
+def branch_context_summary_lines(
+    *,
+    branch: Path,
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+) -> list[str]:
+    branch_spec = load_branch_spec(branch)
+    target = str(
+        branch_spec.get("target")
+        or discovery.get("ticker")
+        or session.parent.name.upper()
+    ).strip().upper()
+    requested_start = str(
+        branch_spec.get("requested_start") or _get_backtest_start(discovery)
+    ).strip()
+    session_start = _get_backtest_start(discovery)
+    coverage_hints = (readiness or {}).get("coverage_hints") or {}
+    drivers = _branch_driver_list(branch_spec)
+    drivers_text = ", ".join(drivers) if drivers else "none"
+    starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
+    inputs_prepared = dependencies_path(branch).exists()
+
+    lines = [
+        f"target={target}",
+        f"selected_drivers={len(drivers)} ({drivers_text})",
+        f"requested_start={requested_start}",
+    ]
+    if requested_start == session_start:
+        lines.append(f"start_source=session_default ({session_start})")
+    else:
+        lines.append(
+            f"session_backtest_start={session_start} (session-level advisory only)"
+        )
+    target_safe = coverage_hints.get("target_safe_start")
+    if target_safe:
+        lines.append(f"target_safe_hint={target_safe}")
+    dense_overlap = coverage_hints.get("dense_overlap_hint_start")
+    if dense_overlap:
+        lines.append(f"dense_overlap_hint={dense_overlap}")
+    lines.append(f"inputs_prepared={'yes' if inputs_prepared else 'no'}")
+    lines.append(
+        "scaffold_status="
+        + ("starter_scaffold" if starter_scaffold else "branch_specific_engine")
+    )
+    if not inputs_prepared:
+        lines.append("current_branch_boundary=prepare_branch_inputs")
+    elif starter_scaffold:
+        lines.append("recorded_round_boundary=branch_specific_engine_required")
+    else:
+        lines.append("recorded_round_boundary=branch_specific_engine_present")
+    return lines
+
+
+def render_section(title: str, lines: list[str]) -> None:
+    if not lines:
+        return
+    print(f"{title}:")
+    for line in lines:
+        print(f"  {line}")
+
+
+def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
+    verdict = str(result.get("verdict") or "").upper()
+    diagnostics = result.get("diagnostics") or {}
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    failure_signature = str(diagnostics.get("failure_signature") or "")
+    runtime_stage = str(diagnostics.get("runtime_stage") or "")
+    failures = " ".join(str(item) for item in (result.get("failures") or []))
+    failures_lower = failures.lower()
+
+    if failure_signature == "auth_missing" or "api key not found" in failures_lower:
+        return (
+            "workflow_boundary",
+            "The branch is still blocked on auth for a data path; complete the auth handoff before treating this as an engine or strategy issue.",
+        )
+
+    if verdict == "ERROR":
+        if (
+            "target bars" in failures_lower
+            or "no usable target bars" in failures_lower
+            or "requested window" in failures_lower
+        ):
+            return (
+                "data_or_setup_issue",
+                "The branch failed before validation on data/start alignment, not on strategy quality.",
+            )
+        return (
+            "implementation_issue",
+            "The branch failed before validation; inspect engine and runtime wiring before treating this as a strategy result.",
+        )
+
+    if verdict in {"FAIL", "PASS"} and runtime_stage == "validation":
+        if failure_signature in {"zero_information_signal", "signal_always_flat"}:
+            return (
+                "mechanism_result",
+                "Validation ran, but the current mechanism did not express useful information yet.",
+            )
+        return (
+            "validation_result",
+            "Validation ran on the current mechanism; interpret this as research evidence rather than a workflow blocker.",
+        )
+
+    return (
+        "unclear_result_state",
+        "The branch produced a result, but the current state still needs manual inspection.",
+    )
+
+
 def render_selection_narrative(branches: list[dict]) -> str:
     ranked = ranked_branches(branches)[:3]
     if not ranked:
@@ -3361,8 +3700,10 @@ def session_next_step(
         return (
             f"Create the first branch with "
             f"`abel-alpha init-branch --session {session} --branch-id graph-v1`, "
-            "then edit `branch.yaml`, run `prepare-branch`, and use `debug-branch` "
-            "before recording the first round."
+            "then make the branch inputs explicit in `branch.yaml`, inspect the "
+            "starter path through `prepare-branch` and `debug-branch`, and turn "
+            "the engine into a branch-specific mechanism before you treat the "
+            "first round as evidence."
         )
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]

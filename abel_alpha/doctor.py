@@ -12,8 +12,9 @@ from abel_alpha.edge_runtime import (
     probe_edge_discovery_payload,
 )
 from abel_alpha.workspace import (
-    find_workspace_root,
+    default_workspace_path,
     load_workspace_manifest,
+    resolve_workspace_entry,
     resolve_edge_spec,
     resolve_workspace_env_file,
     resolve_runtime_python,
@@ -21,17 +22,29 @@ from abel_alpha.workspace import (
 
 
 SUCCESS_STATUSES = {"ready"}
+WORKSPACE_MODE = "alpha-managed branch research"
+
+
+def build_auth_handoff_command(python_path: str | Path) -> str:
+    """Return the explicit auth handoff command for the active workspace runtime."""
+    return f"{python_path} -m causal_edge.cli login --json --no-browser"
 
 
 def run_doctor(start: Path | None = None) -> dict[str, object]:
     """Run workspace, environment, edge, and auth readiness checks."""
     start_path = (start or Path.cwd()).resolve()
-    root = find_workspace_root(start_path)
+    root, resolution_mode = resolve_workspace_entry(start_path)
     if root is None:
         return {
             "status": "workspace_missing",
             "workspace_root": None,
-            "summary": f"No Abel-alpha workspace found at or above {start_path}",
+            "summary": (
+                "No Abel-alpha workspace found from the current entry path and no "
+                f"default child workspace exists at {default_workspace_path(start_path)}"
+            ),
+            "entry_path": str(start_path),
+            "default_workspace_path": str(default_workspace_path(start_path)),
+            "workspace_resolution": resolution_mode,
             "checks": {
                 "workspace_manifest": "fail",
                 "python_env": "not_run",
@@ -42,7 +55,10 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
                 "auth": "not_run",
                 "edge_login_fallback": "not_run",
             },
-            "next_step": "abel-alpha workspace init <name>",
+            "next_step": (
+                "abel-alpha workspace bootstrap --path "
+                f"{default_workspace_path(start_path)}"
+            ),
         }
 
     try:
@@ -78,7 +94,10 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     }
 
     result: dict[str, object] = {
+        "entry_path": str(start_path),
+        "workspace_resolution": resolution_mode,
         "workspace_root": str(root),
+        "workspace_mode": WORKSPACE_MODE,
         "python_path": str(python_path),
         "workspace_env_file": str(resolve_workspace_env_file(root)),
         "edge_install_target": resolve_edge_spec(root, manifest),
@@ -136,14 +155,16 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         return result
 
     if not auth_check.get("ok"):
+        handoff_command = build_auth_handoff_command(python_path)
         result.update(
             {
                 "status": "auth_missing",
-                "summary": "Workspace environment is ready, but Abel auth was not detected.",
-                "next_step": (
-                    "Install causal-abel and complete OAuth, or run "
-                    f"`{python_path} -m causal_edge.cli login --json --no-browser`"
+                "summary": (
+                    "Workspace environment is ready, but no reusable Abel auth was detected. "
+                    "Start explicit auth handoff now."
                 ),
+                "auth_handoff_command": handoff_command,
+                "next_step": handoff_command,
             }
         )
         return result
@@ -151,8 +172,14 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     result.update(
         {
             "status": "ready",
-            "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
-            "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
+            "summary": (
+                "Workspace, Python environment, causal-edge, and Abel auth are ready "
+                "for alpha-managed branch research."
+            ),
+            "next_step": (
+                "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>  "
+                "# then init-branch -> edit branch.yaml -> prepare-branch"
+            ),
         }
     )
     return result
@@ -193,6 +220,18 @@ def render_doctor_report(result: dict[str, object]) -> str:
     workspace_root = result.get("workspace_root")
     if workspace_root:
         lines.append(f"Workspace root: {workspace_root}")
+    entry_path = result.get("entry_path")
+    if entry_path:
+        lines.append(f"Entry path: {entry_path}")
+    workspace_resolution = result.get("workspace_resolution")
+    if workspace_resolution:
+        lines.append(f"Workspace resolution: {workspace_resolution}")
+    default_workspace = result.get("default_workspace_path")
+    if default_workspace:
+        lines.append(f"Default workspace path: {default_workspace}")
+    workspace_mode = result.get("workspace_mode")
+    if workspace_mode:
+        lines.append(f"Workspace mode: {workspace_mode}")
     python_path = result.get("python_path")
     if python_path:
         lines.append(f"Python path: {python_path}")
@@ -217,5 +256,8 @@ def render_doctor_report(result: dict[str, object]) -> str:
     auth_scope = result.get("auth_scope")
     if auth_scope:
         lines.append(f"Auth scope: {auth_scope}")
+    auth_handoff_command = result.get("auth_handoff_command")
+    if auth_handoff_command:
+        lines.append(f"Auth handoff command: {auth_handoff_command}")
     lines.append(f"Next step: {result.get('next_step', '')}")
     return "\n".join(lines)
