@@ -26,9 +26,10 @@ Each round should answer a question about mechanism, not just consume compute.
 ## What Each Layer Owns
 
 - session: discovery and readiness
-- branch: branch spec and engine
+- branch: branch spec and `compute_decisions(self, ctx)` implementation
 - edge cache: market data reuse
-- prepare step: branch input resolution
+- prepare step: branch input resolution and runtime contract materialization
+- debug step: semantic preflight
 - run step: evaluation and recording
 
 Session `backtest_start` is the default exploration target. When
@@ -42,13 +43,20 @@ Before a recorded round, the branch should already have:
 - `branch.yaml`
 - `engine.py`
 - `inputs/dependencies.json` from `prepare-branch`
+- `inputs/runtime_profile.json`
+- `inputs/execution_constraints.json`
+- `inputs/data_manifest.json`
+- `inputs/context_guide.md`
+- `inputs/probe_samples.json`
 
 `run-branch` is not the place to decide the branch universe implicitly.
+`debug-branch` is the place to test whether the branch can see the world it
+thinks it can see.
 
 ## KEEP Rule
 
 ```
-KEEP if: causal-edge verdict == "PASS" AND metrics improve vs latest KEEP baseline
+KEEP if: semantic preflight is clean enough to trust the run AND causal-edge verdict == "PASS" AND metrics improve vs latest KEEP baseline
 DISCARD: everything else
 ```
 
@@ -71,13 +79,13 @@ real explore move.
 Treat failures as localization signals:
 
 - data/setup failure: fix branch spec or prepare step
-- runtime failure: fix engine implementation
+- semantic/runtime failure: fix engine visibility assumptions or output semantics
 - validation failure: change the strategy idea
 
 Do not mix these categories together. A branch that fails validation is still a
 useful research result if it tells you which mechanism is weak.
 The wrong lesson is "the branch failed." The useful lesson is "what failed:
-data path, implementation, or idea?"
+data path, semantic assumptions, implementation, or idea?"
 
 ## Compounding Rule
 

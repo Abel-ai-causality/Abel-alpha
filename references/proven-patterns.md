@@ -6,6 +6,13 @@ Read them for inspiration during EXPLORE mode, ideally after the branch already
 has a runnable `branch.yaml -> prepare-branch -> debug-branch` path.
 Do NOT copy-paste — understand the MECHANISM and decide if it applies.
 
+These notes are not the primary legality contract.
+
+- Author new branch code against `DecisionContext`.
+- Use `debug-branch` semantic preflight before trusting a recorded round.
+- Treat the temporal caveats below as pattern-specific implementation notes, not
+  as a universal authoring checklist.
+
 ---
 
 ## 1. Dual-Lag Xcorr

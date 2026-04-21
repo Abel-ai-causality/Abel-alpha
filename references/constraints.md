@@ -1,91 +1,82 @@
-# Look-Ahead Constraints (Zero Tolerance)
+# Runtime Legality And Safety
 
-These are STRUCTURAL constraints. They are not a checklist to run at the end —
-they constrain every line of code the agent writes. A violation at ANY point
-is an automatic FAIL, zero tolerance. The harness detects violations at two layers
-(static + runtime), but the agent must internalize these rules to avoid writing
-violations in the first place.
+The branch-default safety story is no longer "remember every possible
+`.shift(1)` rule by hand".
 
-Any strategy code that uses future information is an automatic DISCARD,
-regardless of how much Sharpe improves. These rules are non-negotiable.
+The safety story is:
 
-## Feature Engineering Rules
+- the system materializes the runtime world in `inputs/`
+- strategy code reads market data only through `DecisionContext`
+- strategy code emits next-position intent, not already-effective exposure
+- semantic preflight explains visibility or timing violations before a recorded round
 
-1. **All features must use `shift(lag)` where lag >= 1**
-   - `sstk_ret.shift(14)` ✓
-   - `sstk_ret` (no shift) ✗
+Any strategy that uses information it could not have seen at decision time is
+still invalid. What changes is where we place the burden: on the runtime
+contract first, not on a giant folklore checklist.
 
-2. **`rolling().stat()` must be followed by `.shift(1)`**
-   - `ret.rolling(5).mean().shift(1)` ✓
-   - `ret.rolling(5).mean()` ✗ (includes today's value)
+## Authoring Contract
 
-3. **No global statistics on full series**
-   - `np.std(pnl[:i])` ✓ (expanding up to i)
-   - `np.std(pnl)` ✗ (uses future data)
+1. Implement `compute_decisions(self, ctx)`.
+2. Read the target through `ctx.target.series(...)`.
+3. Read auxiliary feeds through `ctx.feed(name)...`.
+4. Return `ctx.decisions(next_position)`.
 
-4. **Walk-forward slicing: `[:i]` only**
-   - `s2_pos_arr[:i]` ✓
-   - `s2_pos_arr[:i+1]` ✗ (includes current day)
+That is the legal authoring surface for branch-default strategies.
 
-5. **Normalize datetime semantics before aligning external series**
-   - If strategy dates are UTC-aware, normalize auxiliary series to the same semantics before `reindex(...)`
-   - Do not mix naive and UTC-aware indexes in date comparisons or alignment steps
+## System-Owned Inputs
 
-## Trend Filter Rules
+Treat these files as runtime facts supplied by the system:
 
-6. **Use yesterday's price and MA for today's decision**
-   - `if eth_prices[i-1] < ma_vals[i-1]: pos[i] = 0` ✓
-   - `if eth_prices[i] < ma_vals[i]: pos[i] = 0` ✗
+- `inputs/runtime_profile.json`
+- `inputs/execution_constraints.json`
+- `inputs/data_manifest.json`
+- `inputs/context_guide.md`
+- `inputs/probe_samples.json`
 
-## Position Sizing Rules
+The strategy should not try to rediscover or override them in code. Inspect
+them, then write against the world they describe.
 
-7. **Vol-targeting must use shifted rolling vol**
-   - `rolling_vol.shift(1)` ✓
-   - `rolling_vol` (includes today's vol) ✗
+## What Not To Do
 
-8. **Strategy output must satisfy `abs(position) <= 1`**
-   - `np.clip(position, -1.0, 1.0)` ✓
-   - `position = 1.4 * base_signal` without a final cap ✗
-   - This is a structural leverage constraint on the final position series, not a suggestion.
+- do not call raw data helpers from inside `compute_decisions()`
+- do not hand-roll alignment by reaching around `DecisionContext`
+- do not emit an already-effective `position[t]` series when the contract asks
+  for `next_position`
+- do not treat a suspiciously good backtest as valid before semantic preflight
+  and execution semantics agree
 
-## Target Variable Rules
+## Why This Replaces The Old Rule Folklore
 
-9. **Only `shift(-1)` or `shift(-H)` for targets (predicting future)**
-   - `(ret.shift(-1) > 0)` ✓ for H=1 target
-   - These are prediction targets, not features
+Sometimes the safe transformation really is a lag. Sometimes it is:
 
-## Automated Detection
+- an as-of read onto the target calendar
+- a bounded point-in-time history window
+- a native feed interval between two timestamps
+- a walk-forward train/infer split
 
-`causal-edge evaluate` runs `check_look_ahead()` on `engine.py` before execution.
-Common patterns are caught automatically. But this is not exhaustive —
-you must also manually verify any new feature engineering is lag-safe.
+The framework should help the agent express those legal reads directly instead
+of collapsing every situation into "add `.shift(1)` everywhere".
 
-## Component PnL is Dangerous (Rule 10)
+## How To Use The Feedback Loop
 
-10. **Never use same-day component PnL as a signal**
-   - `comp_pnls["S2"][T] = s2_pos[T] × eth_ret[T]` — contains TODAY's return
-   - `sign(comp_pnls["S2"][T])` leaks today's return direction
-   - Fix: use `np.roll(comp_pnl, 1)` to shift by 1 day, or use component POSITIONS instead
-   - Caught 2026-03-29 by runtime look-ahead detection (autoresearch exp007)
+1. Run `abel-alpha prepare-branch --branch ...`.
+2. Inspect `context_guide.md`, `data_manifest.json`, and `probe_samples.json`.
+3. Edit `engine.py` against `DecisionContext`.
+4. Run `abel-alpha debug-branch --branch ...`.
+5. Read the semantic verdict, warnings, and sampled traces.
+6. Only then decide whether `run-branch` is warranted.
 
-## Two-Layer Detection
+## Static Checks
 
-**Layer 1: Static analysis** (`check_look_ahead`)
-- Scans engine.py source code for regex patterns
-- Catches: missing .shift(), np.std on full array, same-day price vs MA
-- BLIND SPOT: cannot detect look-ahead hidden in pre-computed arrays
+Static and regex-style look-ahead checks may still exist as diagnostics, but
+they are not the main contract. Their job is to provide extra warning signals,
+not to define strategy legality by themselves.
 
-**Layer 2: Runtime analysis** (`check_look_ahead_runtime`)
-- Tests empirical correlations after strategy runs
-- Catches: position magnitude corr with same-day return, implausible hit rate
-- Fills the blind spot of static analysis
+## Common Failure Meanings
 
-Both must pass. Static catches code-level leaks. Runtime catches data-level leaks.
-
-## Common Traps (from project history)
-
-- `ford_5d = ford_ret.rolling(5).mean()` — missing `.shift(1)`, caught 2026-03-14
-- `np.std(full_pnl_series)` for vol normalization — uses future
-- CCA computed on full sample instead of expanding window
-- DOW caps optimized on full sample instead of walk-forward
-- `sign(comp_pnl[T])` contains today's return direction — caught 2026-03-29
+- raw-helper error: the strategy tried to bypass `DecisionContext`
+- shape mismatch: `ctx.decisions(next_position)` received the wrong length or type
+- semantic blocker: the strategy assumptions about feed visibility or execution
+  timing do not match the runtime
+- clipped output: the strategy asked for positions outside declared execution
+  constraints
