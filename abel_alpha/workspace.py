@@ -191,6 +191,7 @@ def render_workspace_status(root: Path, manifest: dict | None = None) -> str:
         f"Workspace: {manifest.get('workspace', {}).get('name', root.name)}",
         f"Root: {root}",
         f"Manifest: {root / MANIFEST_NAME}",
+        "Workspace mode: alpha-managed branch research",
         f"Workspace env file: {resolve_workspace_env_file(root)}",
         f"Research root: {resolved['research_root']}",
         f"Docs root: {resolved['docs_root']}",
@@ -252,16 +253,24 @@ Use that path as orientation, not as a rigid script. The important boundary is:
 - session `backtest_start` is a default target; branch `requested_start` can override it explicitly
 - the generated `engine.py` is a starter baseline for the first end-to-end run, not a finished branch thesis
 
+## Workspace Boundary
+
+- This workspace is for alpha-managed branch research.
+- Keep research sessions and branches under `research/`.
+- Do not run `causal-edge init` inside this workspace.
+- If you need a standalone Abel-edge project, create it in a separate directory outside this workspace.
+
 If the workspace runtime is missing or you want to replace it, run
-`abel-alpha env init` again. If your environment cannot create a new venv,
-point alpha at an existing interpreter with
-`abel-alpha env init --runtime-python /path/to/python`.
+`abel-alpha env init` again.
+If your environment cannot create a new venv, point alpha at an existing
+interpreter with `abel-alpha env init --runtime-python /path/to/python`.
 
 ## Readiness Gate
 
 Run `abel-alpha doctor` before opening a session.
 
 - `ready`: you can start research
+- `ready` means continue with `init-session -> init-branch -> branch.yaml -> prepare-branch`
 - `auth_missing`: no reusable auth was found; start the explicit workspace-runtime auth handoff immediately and surface the URL as soon as it appears
 - `env_missing`, `edge_missing`, or `edge_contract_missing`: rerun `abel-alpha env init`
 """
@@ -305,6 +314,9 @@ path is proven, encode the branch-specific mechanism there. Treat session
 readiness as advisory context; the branch's explicit `requested_start` is the
 runtime start when it is set. Treat this workspace `.venv` as the canonical
 runtime for daily work.
+This workspace is for alpha-managed branch research, so do not create a
+standalone `causal-edge init` project inside it. Put standalone edge work in a
+separate directory.
 
 ### Run one research round
 ```bash

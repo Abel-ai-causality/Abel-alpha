@@ -12,6 +12,11 @@ strategy exploration less blind.
 Use Abel's causal graph as the opening prior: narrower search, clearer branch
 hypotheses, and faster compounding from one round to the next.
 
+Abel-alpha owns the research workspace layout. Inside an alpha workspace, stay
+on the branch research path under `research/`; if you need a standalone
+`causal-edge init` project, create it in a separate directory outside the
+workspace.
+
 ## Default Model
 
 - launch root: the current agent launch directory

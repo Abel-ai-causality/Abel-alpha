@@ -589,6 +589,11 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
             f"{resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}"
         )
         print("")
+        print("Boundary:")
+        print("  This workspace is for alpha-managed branch research.")
+        print("  Keep research artifacts under `research/`.")
+        print("  If you need a standalone Abel-edge project, create it outside this workspace.")
+        print("")
         print("From here:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
@@ -722,6 +727,7 @@ def handle_env_command(args: argparse.Namespace) -> int:
     print("From here:")
     print("  abel-alpha doctor")
     print(f"  {default_activate_command()}")
+    print("  # once doctor is ready: init-session -> init-branch -> edit branch.yaml -> prepare-branch")
     return 0
 
 

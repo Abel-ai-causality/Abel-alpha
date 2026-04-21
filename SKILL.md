@@ -28,6 +28,13 @@ Abel's causal graph is the opening prior, not the final answer.
 Use it to narrow the search space, surface more plausible mechanisms, and make
 each round compound on a smaller, more defensible set of ideas.
 
+Alpha owns the research workspace layout. When you are inside an Abel-alpha
+workspace, keep the work on the session/branch path under `research/`. If you
+need a standalone `causal-edge init` project, create it outside the
+Abel-alpha workspace instead of mixing the two modes.
+
+There are two layers of environment:
+
 In practice, this skill should help the agent:
 
 - start causal-first instead of scanning a huge undirected space
