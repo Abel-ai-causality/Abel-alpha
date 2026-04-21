@@ -9,6 +9,7 @@ import yaml
 
 MANIFEST_NAME = "alpha.workspace.yaml"
 DEFAULT_EDGE_SPEC = "git+https://github.com/Abel-ai-causality/Abel-edge.git@main"
+DEFAULT_WORKSPACE_NAME = "abel-alpha-workspace"
 
 
 def find_workspace_root(start: Path | None = None) -> Path | None:
@@ -23,6 +24,29 @@ def find_workspace_root(start: Path | None = None) -> Path | None:
 def is_workspace_root(path: Path) -> bool:
     """Return whether ``path`` contains an Abel-alpha workspace manifest."""
     return (path / MANIFEST_NAME).exists()
+
+
+def default_workspace_path(start: Path | None = None) -> Path:
+    """Return the default child workspace path for a launch root."""
+    current = (start or Path.cwd()).expanduser().resolve()
+    return current / DEFAULT_WORKSPACE_NAME
+
+
+def resolve_workspace_entry(start: Path | None = None) -> tuple[Path | None, str]:
+    """Resolve workspace re-entry from a workspace root, descendant, or launch root."""
+    current = (start or Path.cwd()).expanduser().resolve()
+    if is_workspace_root(current):
+        return current, "current_workspace_root"
+
+    ancestor = find_workspace_root(current)
+    if ancestor is not None:
+        return ancestor, "workspace_ancestor"
+
+    child = default_workspace_path(current)
+    if is_workspace_root(child):
+        return child, "launch_root_child"
+
+    return None, "missing"
 
 
 def load_workspace_manifest(root: Path) -> dict:
@@ -77,15 +101,25 @@ def resolve_edge_spec(root: Path, manifest: dict | None = None) -> str:
     return configured or DEFAULT_EDGE_SPEC
 
 
-def scaffold_workspace(name: str, *, target_root: Path | None = None) -> Path:
+def scaffold_workspace(
+    name: str,
+    *,
+    target_root: Path | None = None,
+    allow_existing_empty: bool = False,
+) -> Path:
     """Create a new Abel-alpha workspace directory with the standard layout."""
     root = (target_root or Path.cwd() / name).resolve()
     if root.exists():
-        raise FileExistsError(
-            f"Directory '{root}' already exists. Choose a different workspace name or path."
-        )
-
-    root.mkdir(parents=True)
+        if not root.is_dir():
+            raise FileExistsError(
+                f"Path '{root}' already exists and is not a directory."
+            )
+        if not allow_existing_empty or any(root.iterdir()):
+            raise FileExistsError(
+                f"Directory '{root}' already exists. Choose a different workspace name or path."
+            )
+    else:
+        root.mkdir(parents=True)
     manifest = build_default_manifest(name=name)
     resolved = resolve_workspace_paths(root, manifest)
     for key in ("docs_root", "research_root", "cache_root", "logs_root"):
@@ -176,10 +210,17 @@ def render_workspace_readme(name: str) -> str:
 
 This is an Abel-alpha research workspace.
 
-## Standard Flow
+Treat this directory as the canonical workspace for this working area.
+Treat this workspace's `.venv` as the canonical runtime for daily research.
+
+The CLI commands below are the tools Abel-alpha uses to continue research
+inside this workspace. The point is not to memorize a checklist. The point is
+to keep the current research state legible while you move from session setup
+into branch evidence.
+
+## A Usual Path
 
 ```bash
-abel-alpha env init
 abel-alpha doctor
 {default_activate_command()}
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
@@ -190,23 +231,38 @@ abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
-## Current Rules
+Use that path as orientation, not as a rigid script. The important boundary is:
+- `doctor` tells you whether the workspace is actually ready
+- `branch.yaml` makes the branch inputs explicit
+- `prepare-branch` resolves inputs before you treat any round as evidence
+- the starter `engine.py` is only there to verify branch wiring before a branch-specific mechanism exists
+
+## Re-entry
+
+- if you open this workspace root again later, continue here
+- if you open the parent launch directory later, reuse its child `abel-alpha-workspace` before creating another one
+- do not create a second workspace in the same area unless you want one intentionally
+
+## What This Workspace Makes Explicit
 
 - session owns `discovery.json` and `readiness.json`
 - branch owns `branch.yaml`
 - edge owns the market-data cache
 - `prepare-branch` should run before a recorded round
 - session `backtest_start` is a default target; branch `requested_start` can override it explicitly
+- the generated `engine.py` is a starter baseline for the first end-to-end run, not a finished branch thesis
 
-If your environment cannot create a new venv, point alpha at an existing
-interpreter with `abel-alpha env init --runtime-python /path/to/python`.
+If the workspace runtime is missing or you want to replace it, run
+`abel-alpha env init` again. If your environment cannot create a new venv,
+point alpha at an existing interpreter with
+`abel-alpha env init --runtime-python /path/to/python`.
 
-## Readiness gate
+## Readiness Gate
 
 Run `abel-alpha doctor` before opening a session.
 
 - `ready`: you can start research
-- `auth_missing`: complete `causal-abel` OAuth or use the standalone edge login fallback
+- `auth_missing`: no reusable auth was found; start the explicit workspace-runtime auth handoff immediately and surface the URL as soon as it appears
 - `env_missing`, `edge_missing`, or `edge_contract_missing`: rerun `abel-alpha env init`
 """
 
@@ -214,6 +270,11 @@ Run `abel-alpha doctor` before opening a session.
 def render_workspace_agents() -> str:
     """Render the starter AGENTS guide for a new workspace."""
     return """# AGENTS.md — Abel-alpha Workspace
+
+Use this workspace as the default place to continue research for this working
+area. The CLI commands below are tools for operating inside this workspace, but
+the goal is to keep the current branch state understandable rather than to
+follow a rigid script.
 
 ## I want to...
 
@@ -225,20 +286,25 @@ abel-alpha doctor
 
 ### Start a new exploration session
 ```bash
-abel-alpha env init
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
 edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
 abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
+abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
-Run `doctor` before `init-session`. If it reports `auth_missing`, complete
-`causal-abel` OAuth or use the standalone edge login fallback first.
-Treat `branch.yaml` as the branch definition and `prepare-branch` as the
-required pre-run input resolution step.
-Treat session readiness as advisory context; the branch's explicit
-`requested_start` is the runtime start when it is set.
+Run `doctor` before `init-session`. If it reports `auth_missing`, move
+immediately into the workspace runtime's explicit auth handoff and surface the
+URL as soon as it appears.
+Treat `branch.yaml` as the place where target, start, drivers, and overlap
+become explicit. Treat `prepare-branch` as the moment that makes those inputs
+real. Treat the generated `engine.py` as a starter path check; once the branch
+path is proven, encode the branch-specific mechanism there. Treat session
+readiness as advisory context; the branch's explicit `requested_start` is the
+runtime start when it is set. Treat this workspace `.venv` as the canonical
+runtime for daily work.
 
 ### Run one research round
 ```bash
@@ -252,6 +318,10 @@ abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 - `research/` stores sessions, branches, and evaluation outputs
 - `docs/` stores plans, summaries, and iteration records
 - `cache/market_data/` is the edge-owned shared cache root
+
+### Re-enter this workspace later
+- if you are already in this workspace root, continue here directly
+- if you are in the parent launch directory, reuse its `abel-alpha-workspace` child before creating another one
 """
 
 

@@ -1,7 +1,16 @@
 interface:
   display_name: "Abel Alpha"
-  short_description: "Workspace-first Abel alpha research flow."
+  short_description: "Bootstrap-first, reuse-first causal workspace research skill."
   default_prompt: >
-    Use $abel-alpha to initialize an Abel-alpha research workspace, run
-    `env init` and `doctor`, resolve auth if needed, then create a session,
-    branch, and first research round through the packaged CLI.
+    Use $abel-alpha to establish or continue the default Abel workspace for
+    the current launch root. On first use, prefer the thin
+    `scripts/bootstrap_workspace.py --path ...` entrypoint through `python3`
+    so system Python is enough to establish the workspace; after the workspace
+    exists, continue from inside it with the Abel-alpha CLI, and when
+    re-entering from the launch root, reuse that same child workspace before
+    creating anything new; if `auth_missing` appears and no reusable auth is
+    found, immediately enter explicit auth handoff and surface the URL; keep
+    explicit paths, auth reuse-first behavior, and Abel causal discovery as
+    the opening prior for narrower, compounding exploration; treat the
+    generated `engine.py` as a runnable starter baseline for the first
+    prepare/debug/run pass, then replace it with the branch thesis.
