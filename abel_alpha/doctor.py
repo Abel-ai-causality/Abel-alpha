@@ -22,6 +22,7 @@ from abel_alpha.workspace import (
 
 
 SUCCESS_STATUSES = {"ready"}
+WORKSPACE_MODE = "alpha-managed branch research"
 
 
 def build_auth_handoff_command(python_path: str | Path) -> str:
@@ -96,6 +97,7 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
         "entry_path": str(start_path),
         "workspace_resolution": resolution_mode,
         "workspace_root": str(root),
+        "workspace_mode": WORKSPACE_MODE,
         "python_path": str(python_path),
         "workspace_env_file": str(resolve_workspace_env_file(root)),
         "edge_install_target": resolve_edge_spec(root, manifest),
@@ -170,8 +172,14 @@ def run_doctor(start: Path | None = None) -> dict[str, object]:
     result.update(
         {
             "status": "ready",
-            "summary": "Workspace, Python environment, causal-edge, and Abel auth are ready.",
-            "next_step": "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>",
+            "summary": (
+                "Workspace, Python environment, causal-edge, and Abel auth are ready "
+                "for alpha-managed branch research."
+            ),
+            "next_step": (
+                "abel-alpha init-session --ticker <TICKER> --exp-id <session-id>  "
+                "# then init-branch -> edit branch.yaml -> prepare-branch"
+            ),
         }
     )
     return result
@@ -221,6 +229,9 @@ def render_doctor_report(result: dict[str, object]) -> str:
     default_workspace = result.get("default_workspace_path")
     if default_workspace:
         lines.append(f"Default workspace path: {default_workspace}")
+    workspace_mode = result.get("workspace_mode")
+    if workspace_mode:
+        lines.append(f"Workspace mode: {workspace_mode}")
     python_path = result.get("python_path")
     if python_path:
         lines.append(f"Python path: {python_path}")

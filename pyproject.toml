@@ -1,6 +1,6 @@
 [project]
 name = "abel-alpha"
-version = "3.3.0"
+version = "3.3.1"
 description = "Workspace-oriented research orchestration for Abel-driven alpha discovery"
 requires-python = ">=3.11"
 license = "MIT"
@@ -9,12 +9,20 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 abel-alpha = "abel_alpha.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["abel_alpha*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["setuptools>=68"]

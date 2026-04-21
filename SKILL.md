@@ -1,6 +1,6 @@
 ---
 name: abel-alpha
-version: 3.3.0
+version: 3.3.1
 description: >
   Use when: the user wants to start or continue an Abel-alpha research workflow
   for an asset, detect or create the default workspace for the current launch
@@ -27,6 +27,13 @@ The point is to make exploration less blind.
 Abel's causal graph is the opening prior, not the final answer.
 Use it to narrow the search space, surface more plausible mechanisms, and make
 each round compound on a smaller, more defensible set of ideas.
+
+Alpha owns the research workspace layout. When you are inside an Abel-alpha
+workspace, keep the work on the session/branch path under `research/`. If you
+need a standalone `causal-edge init` project, create it outside the
+Abel-alpha workspace instead of mixing the two modes.
+
+There are two layers of environment:
 
 In practice, this skill should help the agent:
 

@@ -17,6 +17,9 @@ abel-alpha run-branch --branch research/<ticker>/<exp_id>/branches/graph-v1 -d "
 
 Before this loop, the workspace should already exist and `abel-alpha doctor`
 should already be acceptable.
+Inside an Abel-alpha workspace, keep the research on this session/branch path
+under `research/` rather than creating a standalone `causal-edge init`
+sidecar project.
 This is a compounding search loop, not a checklist of unrelated backtests.
 Each round should answer a question about mechanism, not just consume compute.
 
