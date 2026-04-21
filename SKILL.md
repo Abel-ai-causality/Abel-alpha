@@ -1,6 +1,6 @@
 ---
 name: abel-alpha
-version: 3.2.0
+version: 3.3.0
 description: >
   Use when: user wants to research what drives an asset, create a new Abel-alpha
   research workspace, or run an agent-guided strategy exploration loop.
