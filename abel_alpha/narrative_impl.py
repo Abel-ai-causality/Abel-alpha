@@ -3274,6 +3274,18 @@ def build_branch_context(
     dependencies = {}
     if dependencies_path(branch).exists():
         dependencies = json.loads(dependencies_path(branch).read_text(encoding="utf-8"))
+    cache = dependencies.get("cache") if isinstance(dependencies, dict) else {}
+    primary_feed = {
+        "name": "primary",
+        "kind": "bars",
+        "adapter": str((cache or {}).get("adapter") or "abel"),
+        "timeframe": str((cache or {}).get("timeframe") or "1d"),
+        "symbol": discovery.get("ticker", session.parent.name.upper()),
+        "profile": str((cache or {}).get("profile") or "daily"),
+    }
+    cache_root = (cache or {}).get("cache_root")
+    if cache_root:
+        primary_feed["cache_root"] = cache_root
     return {
         "schema_version": 1,
         "workspace_root": str(workspace_root) if workspace_root is not None else None,
@@ -3293,6 +3305,7 @@ def build_branch_context(
         "dependencies": dependencies,
         "discovery": discovery,
         "readiness": readiness,
+        "_feeds": {"primary": primary_feed},
     }
 
 
