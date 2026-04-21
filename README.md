@@ -48,6 +48,12 @@ abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
+That path is a useful orientation, not a rigid script. The important boundary
+is that `branch.yaml` makes the branch inputs explicit, `prepare-branch`
+resolves them before a recorded round, and the generated `engine.py` only
+checks that the branch path is wired before you encode a branch-specific
+mechanism.
+
 If you come back from the parent launch directory instead of the workspace
 root, Abel-alpha should still resolve and reuse that same child workspace
 before it creates anything new.
@@ -57,9 +63,10 @@ transition, not just a warning. Use the workspace runtime's explicit auth
 handoff command, surface the URL immediately, then resume the branch flow after
 authorization succeeds.
 
-The first generated `engine.py` is a runnable starter baseline, not a finished
-branch thesis. Use it to verify that prepare/debug/run all work end to end, and
-then replace it with the branch-specific mechanism you actually want to test.
+The first generated `engine.py` is a runnable starter path check, not a
+finished branch thesis. Use it to verify that prepare/debug/run all work end to
+end, and then replace it with the branch-specific mechanism you actually want
+to test.
 
 If the CLI is already available before the first workspace exists, `abel-alpha
 workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path, but

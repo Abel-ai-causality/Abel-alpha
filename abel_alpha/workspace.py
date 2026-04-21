@@ -213,10 +213,12 @@ This is an Abel-alpha research workspace.
 Treat this directory as the canonical workspace for this working area.
 Treat this workspace's `.venv` as the canonical runtime for daily research.
 
-The CLI commands below are the tools Abel-alpha uses to continue work inside
-this workspace.
+The CLI commands below are the tools Abel-alpha uses to continue research
+inside this workspace. The point is not to memorize a checklist. The point is
+to keep the current research state legible while you move from session setup
+into branch evidence.
 
-## Standard Flow
+## A Usual Path
 
 ```bash
 abel-alpha doctor
@@ -229,13 +231,19 @@ abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
 ```
 
+Use that path as orientation, not as a rigid script. The important boundary is:
+- `doctor` tells you whether the workspace is actually ready
+- `branch.yaml` makes the branch inputs explicit
+- `prepare-branch` resolves inputs before you treat any round as evidence
+- the starter `engine.py` is only there to verify branch wiring before a branch-specific mechanism exists
+
 ## Re-entry
 
 - if you open this workspace root again later, continue here
 - if you open the parent launch directory later, reuse its child `abel-alpha-workspace` before creating another one
 - do not create a second workspace in the same area unless you want one intentionally
 
-## Current Rules
+## What This Workspace Makes Explicit
 
 - session owns `discovery.json` and `readiness.json`
 - branch owns `branch.yaml`
@@ -249,7 +257,7 @@ If the workspace runtime is missing or you want to replace it, run
 point alpha at an existing interpreter with
 `abel-alpha env init --runtime-python /path/to/python`.
 
-## Readiness gate
+## Readiness Gate
 
 Run `abel-alpha doctor` before opening a session.
 
@@ -264,7 +272,9 @@ def render_workspace_agents() -> str:
     return """# AGENTS.md — Abel-alpha Workspace
 
 Use this workspace as the default place to continue research for this working
-area. The CLI commands below are tools for operating inside this workspace.
+area. The CLI commands below are tools for operating inside this workspace, but
+the goal is to keep the current branch state understandable rather than to
+follow a rigid script.
 
 ## I want to...
 
@@ -288,13 +298,13 @@ abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "basel
 Run `doctor` before `init-session`. If it reports `auth_missing`, move
 immediately into the workspace runtime's explicit auth handoff and surface the
 URL as soon as it appears.
-Treat `branch.yaml` as the branch definition and `prepare-branch` as the
-required pre-run input resolution step.
-Treat the generated `engine.py` as a starter baseline you can run once to
-verify the branch path before replacing it with the branch-specific mechanism.
-Treat session readiness as advisory context; the branch's explicit
-`requested_start` is the runtime start when it is set.
-Treat this workspace `.venv` as the canonical runtime for daily work.
+Treat `branch.yaml` as the place where target, start, drivers, and overlap
+become explicit. Treat `prepare-branch` as the moment that makes those inputs
+real. Treat the generated `engine.py` as a starter path check; once the branch
+path is proven, encode the branch-specific mechanism there. Treat session
+readiness as advisory context; the branch's explicit `requested_start` is the
+runtime start when it is set. Treat this workspace `.venv` as the canonical
+runtime for daily work.
 
 ### Run one research round
 ```bash

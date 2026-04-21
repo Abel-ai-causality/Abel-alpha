@@ -451,7 +451,7 @@ def main() -> int:
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
         return 0
     if args.command == "set-backtest-start":
@@ -479,7 +479,7 @@ def main() -> int:
         if warning:
             print(f"  warning: {warning}")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha status --session {session}")
         return 0
     if args.command == "set-hypothesis":
@@ -511,7 +511,7 @@ def main() -> int:
         print(f"Updated branch hypothesis for {branch}")
         print(f"  hypothesis: {hypothesis}")
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         return 0
@@ -533,13 +533,22 @@ def main() -> int:
             for line in readiness_recommendation_lines(readiness):
                 print(f"  coverage_hint: {line}")
         print("")
-        print("Reminders:")
-        print("  Confirm branch.yaml before wiring engine.py so target/start/drivers stay explicit.")
-        print("  If you fetch bars, pass an explicit `limit=...`.")
-        print("  Avoid blanket `dropna()` on joined frames before confirming the target ticker remains present.")
-        print("  The default engine is a debug-safe starter baseline; run it once to verify the branch path, then replace it with the branch thesis.")
+        render_section(
+            "Branch context",
+            branch_context_summary_lines(
+                branch=branch,
+                session=session,
+                discovery=discovery,
+                readiness=readiness,
+            ),
+        )
         print("")
-        print("Next:")
+        print("What matters now:")
+        print("  branch.yaml is where target, start, drivers, and overlap become explicit.")
+        print("  The generated engine is only a starter path check; it helps you verify the branch wiring before you encode a branch-specific mechanism.")
+        print("  If you fetch bars, keep `limit=...` explicit and avoid blanket `dropna()` before confirming the target column survives.")
+        print("")
+        print("From here:")
         print(f"  edit {branch / BRANCH_SPEC_FILENAME}")
         print(f"  abel-alpha prepare-branch --branch {branch}")
         print(f"  abel-alpha debug-branch --branch {branch}")
@@ -580,7 +589,7 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
             f"{resolved['venv'] / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')}"
         )
         print("")
-        print("Next:")
+        print("From here:")
         print(f"  cd {root}")
         print("  abel-alpha workspace status")
         print(f"  abel-alpha workspace bootstrap --path {root}")
@@ -645,7 +654,7 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         print("")
         print(render_doctor_report(doctor_result))
         print("")
-        print("Next:")
+        print("From here:")
         if doctor_exit_code(doctor_result) == 0:
             print(f"  cd {root}")
             print(f"  {default_activate_command()}")
@@ -710,7 +719,7 @@ def handle_env_command(args: argparse.Namespace) -> int:
         print("  Installed Abel-edge is missing required alpha contracts.")
         print("  Run `abel-alpha doctor` and upgrade the workspace runtime before starting research.")
         print("")
-    print("Next:")
+    print("From here:")
     print("  abel-alpha doctor")
     print(f"  {default_activate_command()}")
     return 0
@@ -1037,6 +1046,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     session = branch.parent.parent
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
+    readiness = load_readiness(session)
     branch_spec = load_branch_spec(branch)
     if not branch_spec:
         raise RuntimeError(f"Missing {BRANCH_SPEC_FILENAME} under {branch}")
@@ -1060,7 +1070,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     advisory_lines = branch_runtime_advisory_lines(
         branch_requested_start=requested_start,
         discovery=discovery,
-        readiness=load_readiness(session),
+        readiness=readiness,
     )
     dependencies = branch_dependencies_payload(
         branch=branch,
@@ -1163,12 +1173,22 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
             print(
                 f"  cache_failure: {item.get('symbol', 'unknown')} -> {item.get('error', 'unknown')}"
             )
+    render_section(
+        "Prepared branch state",
+        branch_context_summary_lines(
+            branch=branch,
+            session=session,
+            discovery=discovery,
+            readiness=readiness,
+        ),
+    )
     print("")
-    print("Next:")
+    print("From here:")
     if auth_handoff_needed:
         print(f"  {build_auth_handoff_command(python_bin)}")
         print(f"  abel-alpha prepare-branch --branch {branch}")
     else:
+        print("  The branch inputs are ready; use debug to inspect the current mechanism, or record a round once the engine reflects the branch thesis.")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
     return completed.returncode
@@ -1258,12 +1278,23 @@ def run_branch_round(args: argparse.Namespace) -> int:
     warning = build_readiness_warning(readiness)
     if branch_uses_default_scaffold(branch, discovery, readiness, session) and not args.allow_untouched_template:
         print(
-            "Refusing to record a round from the untouched default engine scaffold. "
-            "Edit engine.py first, or use `abel-alpha debug-branch` while wiring the first real signal.",
+            "The branch is still using the untouched starter scaffold. "
+            "That starter path is useful for checking wiring, but round-001 should reflect a branch-specific mechanism.",
+            file=sys.stderr,
+        )
+        print(
+            "Interpretation: workflow_boundary -> the branch is ready for a mechanism decision, not another setup step.",
             file=sys.stderr,
         )
         for line in advisory_lines:
             print(f"Runtime context: {line}", file=sys.stderr)
+        for line in branch_context_summary_lines(
+            branch=branch,
+            session=session,
+            discovery=discovery,
+            readiness=readiness,
+        ):
+            print(f"Branch context: {line}", file=sys.stderr)
         if warning and backtest_start == _get_backtest_start(discovery):
             print(f"Readiness warning: {warning}", file=sys.stderr)
         for line in readiness_recommendation_lines(readiness):
@@ -1455,6 +1486,14 @@ def run_branch_round(args: argparse.Namespace) -> int:
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
     print(f"Edge handoff: {handoff_path.relative_to(session)}")
+    frame_key, frame_text = classify_result_frame(result)
+    render_section(
+        "Interpretation",
+        [
+            f"result_class={frame_key}",
+            frame_text,
+        ],
+    )
     return 0
 
 
@@ -1528,6 +1567,20 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     sys.stderr.write(completed.stderr)
     for line in advisory_lines:
         print(f"Runtime context: {line}")
+    if debug_result_path.exists():
+        try:
+            debug_result = json.loads(debug_result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            debug_result = {}
+        if isinstance(debug_result, dict) and debug_result:
+            frame_key, frame_text = classify_result_frame(debug_result)
+            render_section(
+                "Interpretation",
+                [
+                    f"result_class={frame_key}",
+                    frame_text,
+                ],
+            )
     print(f"Debug context: {context_path.relative_to(session)}")
     if debug_result_path.exists():
         print(f"Debug result: {debug_result_path.relative_to(session)}")
@@ -2337,6 +2390,124 @@ def branch_runtime_advisory_lines(
     return lines
 
 
+def _branch_driver_list(branch_spec: dict) -> list[str]:
+    return [
+        str(item).strip().upper()
+        for item in (branch_spec.get("selected_drivers") or [])
+        if str(item).strip()
+    ]
+
+
+def branch_context_summary_lines(
+    *,
+    branch: Path,
+    session: Path,
+    discovery: dict,
+    readiness: dict,
+) -> list[str]:
+    branch_spec = load_branch_spec(branch)
+    target = str(
+        branch_spec.get("target")
+        or discovery.get("ticker")
+        or session.parent.name.upper()
+    ).strip().upper()
+    requested_start = str(
+        branch_spec.get("requested_start") or _get_backtest_start(discovery)
+    ).strip()
+    session_start = _get_backtest_start(discovery)
+    coverage_hints = (readiness or {}).get("coverage_hints") or {}
+    drivers = _branch_driver_list(branch_spec)
+    drivers_text = ", ".join(drivers) if drivers else "none"
+    starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
+    inputs_prepared = dependencies_path(branch).exists()
+
+    lines = [
+        f"target={target}",
+        f"selected_drivers={len(drivers)} ({drivers_text})",
+        f"requested_start={requested_start}",
+    ]
+    if requested_start == session_start:
+        lines.append(f"start_source=session_default ({session_start})")
+    else:
+        lines.append(
+            f"session_backtest_start={session_start} (session-level advisory only)"
+        )
+    target_safe = coverage_hints.get("target_safe_start")
+    if target_safe:
+        lines.append(f"target_safe_hint={target_safe}")
+    dense_overlap = coverage_hints.get("dense_overlap_hint_start")
+    if dense_overlap:
+        lines.append(f"dense_overlap_hint={dense_overlap}")
+    lines.append(f"inputs_prepared={'yes' if inputs_prepared else 'no'}")
+    lines.append(
+        "scaffold_status="
+        + ("starter_scaffold" if starter_scaffold else "branch_specific_engine")
+    )
+    if not inputs_prepared:
+        lines.append("current_branch_boundary=prepare_branch_inputs")
+    elif starter_scaffold:
+        lines.append("recorded_round_boundary=branch_specific_engine_required")
+    else:
+        lines.append("recorded_round_boundary=branch_specific_engine_present")
+    return lines
+
+
+def render_section(title: str, lines: list[str]) -> None:
+    if not lines:
+        return
+    print(f"{title}:")
+    for line in lines:
+        print(f"  {line}")
+
+
+def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
+    verdict = str(result.get("verdict") or "").upper()
+    diagnostics = result.get("diagnostics") or {}
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    failure_signature = str(diagnostics.get("failure_signature") or "")
+    runtime_stage = str(diagnostics.get("runtime_stage") or "")
+    failures = " ".join(str(item) for item in (result.get("failures") or []))
+    failures_lower = failures.lower()
+
+    if failure_signature == "auth_missing" or "api key not found" in failures_lower:
+        return (
+            "workflow_boundary",
+            "The branch is still blocked on auth for a data path; complete the auth handoff before treating this as an engine or strategy issue.",
+        )
+
+    if verdict == "ERROR":
+        if (
+            "target bars" in failures_lower
+            or "no usable target bars" in failures_lower
+            or "requested window" in failures_lower
+        ):
+            return (
+                "data_or_setup_issue",
+                "The branch failed before validation on data/start alignment, not on strategy quality.",
+            )
+        return (
+            "implementation_issue",
+            "The branch failed before validation; inspect engine and runtime wiring before treating this as a strategy result.",
+        )
+
+    if verdict in {"FAIL", "PASS"} and runtime_stage == "validation":
+        if failure_signature in {"zero_information_signal", "signal_always_flat"}:
+            return (
+                "mechanism_result",
+                "Validation ran, but the current mechanism did not express useful information yet.",
+            )
+        return (
+            "validation_result",
+            "Validation ran on the current mechanism; interpret this as research evidence rather than a workflow blocker.",
+        )
+
+    return (
+        "unclear_result_state",
+        "The branch produced a result, but the current state still needs manual inspection.",
+    )
+
+
 def render_selection_narrative(branches: list[dict]) -> str:
     ranked = ranked_branches(branches)[:3]
     if not ranked:
@@ -2543,9 +2714,10 @@ def session_next_step(
         return (
             f"Create the first branch with "
             f"`abel-alpha init-branch --session {session} --branch-id graph-v1`, "
-            "then confirm `branch.yaml`, run the starter baseline through "
-            "`prepare-branch`, `debug-branch`, and `run-branch`, and only then "
-            "replace `engine.py` with the first branch-specific thesis."
+            "then make the branch inputs explicit in `branch.yaml`, inspect the "
+            "starter path through `prepare-branch` and `debug-branch`, and turn "
+            "the engine into a branch-specific mechanism before you treat the "
+            "first round as evidence."
         )
     leader = select_leader(branches)
     pending = [branch for branch in branches if not branch["rows"]]
