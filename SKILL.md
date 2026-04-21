@@ -1,6 +1,6 @@
 ---
 name: abel-alpha
-version: 3.2.0
+version: 3.3.0
 description: >
   Use when: the user wants to start or continue an Abel-alpha research workflow
   for an asset, detect or create the default workspace for the current launch
