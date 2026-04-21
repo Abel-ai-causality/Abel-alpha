@@ -173,15 +173,12 @@ Use branch.yaml to make the critical research choices explicit:
   - requested_start
   - selected_drivers
   - overlap_mode
-Then use StrategyEngine research helpers as thin readers/executors:
-  - self.research_target_ticker()
-  - self.research_requested_start()
-  - self.research_driver_tickers()
-  - self.load_research_bars(...)
-  - self.research_close_frame(...)
-  - self.research_target_driver_frame(overlap="target_only")
-If you fetch market data, pass an explicit `limit=...` instead of relying on API defaults.
-Avoid blanket `dropna()` on a joined price frame before confirming the target ticker column still survives.
+Write against DecisionContext instead of raw research helpers:
+  - ctx.decision_index()
+  - ctx.target.series("close")
+  - ctx.feed(name).asof_series("close")
+  - ctx.points()
+  - ctx.decisions(next_position)
 If data or runtime setup is broken, let the error surface and inspect it with `abel-alpha debug-branch`;
 do not hide setup failures behind synthetic outputs.
 Current readiness warning: {readiness_warning}
@@ -190,29 +187,13 @@ Coverage hints: {coverage_hints_text}
  
 from __future__ import annotations
 
-import numpy as np
-
 from causal_edge.engine.base import StrategyEngine
 
 
 class BranchEngine(StrategyEngine):
-    def compute_signals(self):
-        target = self.research_target_ticker() or "{ticker}"
-        start = self.research_requested_start() or "2020-01-01"
-        close_frame = self.research_close_frame(
-            driver_tickers=[],
-            include_target=True,
-            require_usable=False,
-            start=start,
-            limit=600,
-        )
-        if target not in close_frame.columns:
-            raise RuntimeError(
-                "The default Abel-alpha baseline could not find target bars for "
-                f"{{target}}. Confirm auth/data access, then rerun `abel-alpha prepare-branch`."
-            )
-        target_close = close_frame[target].dropna()
-        if target_close.empty:
+    def compute_decisions(self, ctx):
+        close = ctx.target.series("close")
+        if close.empty:
             raise RuntimeError(
                 "The default Abel-alpha baseline loaded no usable target bars. "
                 "Confirm the requested window in branch.yaml, then rerun "
@@ -221,21 +202,11 @@ class BranchEngine(StrategyEngine):
         # Debug-safe starting point: a simple target-trend starter baseline.
         # It exists to make the first branch runnable and comparable, not to
         # pretend that discovery has already been translated into a real edge.
-        slow_mean = target_close.rolling(window=40, min_periods=15).mean()
-        positions = (target_close > slow_mean).astype(float).to_numpy(dtype=float).copy()
-        if len(positions) > 0:
-            positions[0] = 0.0
-        return self.finalize_signals(
-            positions,
-            target_close.index,
-            target_close.to_numpy(dtype=float),
-        )
-
-    def get_latest_signal(self):
-        positions, dates, _ = self.compute_signals()
-        if len(dates) == 0:
-            return {{"position": 0.0, "date": "not-run"}}
-        return {{"position": float(positions[-1]), "date": str(dates[-1].date())}}
+        slow_mean = close.rolling(window=40, min_periods=15).mean()
+        next_position = (close > slow_mean).astype(float).fillna(0.0)
+        if len(next_position) > 0:
+            next_position.iloc[0] = 0.0
+        return ctx.decisions(next_position)
 '''
 
 
