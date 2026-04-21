@@ -62,6 +62,11 @@ BRANCH_STATE_FILENAME = "branch_state.json"
 READINESS_FILENAME = "readiness.json"
 BRANCH_SPEC_FILENAME = "branch.yaml"
 DEPENDENCIES_FILENAME = "dependencies.json"
+RUNTIME_PROFILE_FILENAME = "runtime_profile.json"
+EXECUTION_CONSTRAINTS_FILENAME = "execution_constraints.json"
+DATA_MANIFEST_FILENAME = "data_manifest.json"
+CONTEXT_GUIDE_FILENAME = "context_guide.md"
+PROBE_SAMPLES_FILENAME = "probe_samples.json"
 MEMORY_MANIFEST_FILENAME = "manifest.json"
 MEMORY_BRANCHES_FILENAME = "branches.tsv"
 MEMORY_ROUNDS_FILENAME = "rounds.tsv"
@@ -1366,6 +1371,44 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     cache_payload = json.loads(output_path.read_text(encoding="utf-8"))
     dependencies["cache"] = cache_payload
     output_path.write_text(json.dumps(dependencies, indent=2), encoding="utf-8")
+    runtime_profile = build_runtime_profile_payload(target=target)
+    execution_constraints = build_execution_constraints_payload(branch_spec)
+    data_manifest = build_data_manifest_payload(
+        target=target,
+        selected_drivers=selected_drivers,
+        cache_payload=cache_payload,
+        readiness=readiness,
+    )
+    probe_samples = build_probe_samples_payload(
+        target=target,
+        requested_start=requested_start,
+        data_manifest=data_manifest,
+    )
+    runtime_profile_path(branch).write_text(
+        json.dumps(runtime_profile, indent=2),
+        encoding="utf-8",
+    )
+    execution_constraints_path(branch).write_text(
+        json.dumps(execution_constraints, indent=2),
+        encoding="utf-8",
+    )
+    data_manifest_path(branch).write_text(
+        json.dumps(data_manifest, indent=2),
+        encoding="utf-8",
+    )
+    probe_samples_path(branch).write_text(
+        json.dumps(probe_samples, indent=2),
+        encoding="utf-8",
+    )
+    context_guide_path(branch).write_text(
+        build_context_guide_markdown(
+            target=target,
+            runtime_profile=runtime_profile,
+            execution_constraints=execution_constraints,
+            data_manifest=data_manifest,
+        ),
+        encoding="utf-8",
+    )
 
     with SessionLock(session):
         append_tsv_row(
@@ -1396,6 +1439,11 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         for item in warm_fail
     )
     print(f"Prepared branch inputs: {output_path.relative_to(session)}")
+    print(f"  runtime_profile: {runtime_profile_path(branch).relative_to(session)}")
+    print(f"  execution_constraints: {execution_constraints_path(branch).relative_to(session)}")
+    print(f"  data_manifest: {data_manifest_path(branch).relative_to(session)}")
+    print(f"  context_guide: {context_guide_path(branch).relative_to(session)}")
+    print(f"  probe_samples: {probe_samples_path(branch).relative_to(session)}")
     print(f"  target: {target}")
     print(f"  selected_drivers: {len(selected_drivers)}")
     print(f"  symbols: {', '.join(symbols)}")
@@ -1422,7 +1470,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         print(f"  {build_auth_handoff_command(python_bin)}")
         print(f"  abel-alpha prepare-branch --branch {branch}")
     else:
-        print("  The branch inputs are ready; use debug to inspect the current mechanism, or record a round once the engine reflects the branch thesis.")
+        print("  The branch inputs are ready; use debug preflight first, then record a round once the engine reflects the branch thesis.")
         print(f"  abel-alpha debug-branch --branch {branch}")
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
     return completed.returncode
@@ -1452,8 +1500,13 @@ def promote_branch_bundle(args: argparse.Namespace) -> int:
 
     shutil.copy2(branch / "engine.py", destination / "engine.py")
     shutil.copy2(branch_spec_path(branch), destination / BRANCH_SPEC_FILENAME)
-    if dependencies_path(branch).exists():
+    if branch_inputs_ready(branch):
         shutil.copy2(dependencies_path(branch), destination / DEPENDENCIES_FILENAME)
+        shutil.copy2(runtime_profile_path(branch), destination / RUNTIME_PROFILE_FILENAME)
+        shutil.copy2(execution_constraints_path(branch), destination / EXECUTION_CONSTRAINTS_FILENAME)
+        shutil.copy2(data_manifest_path(branch), destination / DATA_MANIFEST_FILENAME)
+        shutil.copy2(context_guide_path(branch), destination / CONTEXT_GUIDE_FILENAME)
+        shutil.copy2(probe_samples_path(branch), destination / PROBE_SAMPLES_FILENAME)
 
     bundle_readme = build_promotion_bundle_readme(
         branch=branch,
@@ -1486,6 +1539,11 @@ def promote_branch_bundle(args: argparse.Namespace) -> int:
     print(f"  {destination / BRANCH_SPEC_FILENAME}")
     if (destination / DEPENDENCIES_FILENAME).exists():
         print(f"  {destination / DEPENDENCIES_FILENAME}")
+        print(f"  {destination / RUNTIME_PROFILE_FILENAME}")
+        print(f"  {destination / EXECUTION_CONSTRAINTS_FILENAME}")
+        print(f"  {destination / DATA_MANIFEST_FILENAME}")
+        print(f"  {destination / CONTEXT_GUIDE_FILENAME}")
+        print(f"  {destination / PROBE_SAMPLES_FILENAME}")
     print(f"  {destination / 'PROMOTION.md'}")
     return 0
 
@@ -1496,7 +1554,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
     readiness = load_readiness(session)
-    if not dependencies_path(branch).exists():
+    if not branch_inputs_ready(branch):
         print(
             "Branch inputs have not been prepared yet. "
             "Run `abel-alpha prepare-branch --branch ...` before recording a round.",
@@ -1723,6 +1781,17 @@ def run_branch_round(args: argparse.Namespace) -> int:
     print(f"Edge result: {result_path.relative_to(session)}")
     print(f"Edge validation: {report_path.relative_to(session)}")
     print(f"Edge handoff: {handoff_path.relative_to(session)}")
+    semantic = result.get("semantic") or {}
+    if isinstance(semantic, dict) and semantic:
+        render_section(
+            "Semantic",
+            [
+                f"semantic_verdict={semantic.get('verdict', 'unknown')}",
+                f"decision_count={semantic.get('decision_count', 0)}",
+                f"read_count={semantic.get('read_count', 0)}",
+                f"output_shape={((semantic.get('output_shape') or {}).get('label', 'unknown'))}",
+            ],
+        )
     frame_key, frame_text = classify_result_frame(result)
     render_section(
         "Interpretation",
@@ -1810,6 +1879,17 @@ def debug_branch_run(args: argparse.Namespace) -> int:
         except json.JSONDecodeError:
             debug_result = {}
         if isinstance(debug_result, dict) and debug_result:
+            semantic = debug_result.get("semantic") or {}
+            if isinstance(semantic, dict) and semantic:
+                render_section(
+                    "Preflight",
+                    [
+                        f"semantic_verdict={semantic.get('verdict', 'unknown')}",
+                        f"decision_count={semantic.get('decision_count', 0)}",
+                        f"read_count={semantic.get('read_count', 0)}",
+                        f"output_shape={((semantic.get('output_shape') or {}).get('label', 'unknown'))}",
+                    ],
+                )
             frame_key, frame_text = classify_result_frame(debug_result)
             render_section(
                 "Interpretation",
@@ -2302,7 +2382,12 @@ See `branch.yaml` for the explicit branch inputs and `thesis.md` for the branch 
 - alpha_context_mode: `{diagnostics_note.get("context_mode", "not recorded")}`
 - alpha_context: `{diagnostics_note.get("context_path", "not recorded")}`
 - branch_spec: `{BRANCH_SPEC_FILENAME}`
-- prepared_inputs: `{"inputs/" + DEPENDENCIES_FILENAME if dependencies_path(branch["branch_dir"]).exists() else "not prepared"}`
+- prepared_inputs: `{"inputs/" if branch_inputs_ready(branch["branch_dir"]) else "not prepared"}`
+- runtime_profile: `{"inputs/" + RUNTIME_PROFILE_FILENAME if runtime_profile_path(branch["branch_dir"]).exists() else "not prepared"}`
+- execution_constraints: `{"inputs/" + EXECUTION_CONSTRAINTS_FILENAME if execution_constraints_path(branch["branch_dir"]).exists() else "not prepared"}`
+- data_manifest: `{"inputs/" + DATA_MANIFEST_FILENAME if data_manifest_path(branch["branch_dir"]).exists() else "not prepared"}`
+- context_guide: `{"inputs/" + CONTEXT_GUIDE_FILENAME if context_guide_path(branch["branch_dir"]).exists() else "not prepared"}`
+- probe_samples: `{"inputs/" + PROBE_SAMPLES_FILENAME if probe_samples_path(branch["branch_dir"]).exists() else "not prepared"}`
 - edge_result: `{diagnostics_note.get("result_path", latest.get("result_path", "not recorded"))}`
 - edge_report: `{diagnostics_note.get("report_path", latest.get("report_path", "not recorded"))}`
 - edge_handoff: `{diagnostics_note.get("handoff_path", latest.get("handoff_path", "not recorded"))}`
@@ -3363,7 +3448,7 @@ def branch_context_summary_lines(
     drivers = _branch_driver_list(branch_spec)
     drivers_text = ", ".join(drivers) if drivers else "none"
     starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
-    inputs_prepared = dependencies_path(branch).exists()
+    inputs_prepared = branch_inputs_ready(branch)
 
     lines = [
         f"target={target}",
@@ -3407,8 +3492,11 @@ def render_section(title: str, lines: list[str]) -> None:
 def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
     verdict = str(result.get("verdict") or "").upper()
     diagnostics = result.get("diagnostics") or {}
+    semantic = result.get("semantic") or {}
     if not isinstance(diagnostics, dict):
         diagnostics = {}
+    if not isinstance(semantic, dict):
+        semantic = {}
     failure_signature = str(diagnostics.get("failure_signature") or "")
     runtime_stage = str(diagnostics.get("runtime_stage") or "")
     failures = " ".join(str(item) for item in (result.get("failures") or []))
@@ -3421,6 +3509,11 @@ def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
         )
 
     if verdict == "ERROR":
+        if runtime_stage == "semantic_preflight":
+            return (
+                "preflight_blocker",
+                "The branch failed semantic preflight before metric validation; fix data visibility or output-shape issues before recording a round.",
+            )
         if (
             "target bars" in failures_lower
             or "no usable target bars" in failures_lower
@@ -3444,6 +3537,12 @@ def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
         return (
             "validation_result",
             "Validation ran on the current mechanism; interpret this as research evidence rather than a workflow blocker.",
+        )
+
+    if verdict == "PASS" and str(semantic.get("verdict") or "").upper() == "PASS":
+        return (
+            "preflight_ready",
+            "Semantic preflight passed; the branch is ready for further mechanism tuning or a full recorded round.",
         )
 
     return (
@@ -3584,6 +3683,28 @@ def build_branch_context(
     dependencies = {}
     if dependencies_path(branch).exists():
         dependencies = json.loads(dependencies_path(branch).read_text(encoding="utf-8"))
+    runtime_profile = build_runtime_profile_payload(
+        target=str(branch_spec.get("target") or discovery.get("ticker") or "").strip().upper()
+    )
+    if runtime_profile_path(branch).exists():
+        runtime_profile = json.loads(runtime_profile_path(branch).read_text(encoding="utf-8"))
+    execution_constraints = build_execution_constraints_payload(branch_spec)
+    if execution_constraints_path(branch).exists():
+        execution_constraints = json.loads(
+            execution_constraints_path(branch).read_text(encoding="utf-8")
+        )
+    data_manifest = build_data_manifest_payload(
+        target=str(runtime_profile.get("target") or discovery.get("ticker") or "").strip().upper(),
+        selected_drivers=[
+            str(item).strip().upper()
+            for item in (branch_spec.get("selected_drivers") or [])
+            if str(item).strip()
+        ],
+        cache_payload=(dependencies.get("cache") or {}) if isinstance(dependencies, dict) else {},
+        readiness=readiness,
+    )
+    if data_manifest_path(branch).exists():
+        data_manifest = json.loads(data_manifest_path(branch).read_text(encoding="utf-8"))
     cache = dependencies.get("cache") if isinstance(dependencies, dict) else {}
     primary_feed = {
         "name": "primary",
@@ -3596,6 +3717,23 @@ def build_branch_context(
     cache_root = (cache or {}).get("cache_root")
     if cache_root:
         primary_feed["cache_root"] = cache_root
+    feeds = {"primary": primary_feed}
+    for item in (data_manifest.get("feeds") or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not name or name == "primary" or not symbol:
+            continue
+        feeds[name] = {
+            "name": name,
+            "kind": "bars",
+            "adapter": str(item.get("adapter") or primary_feed["adapter"]),
+            "timeframe": str(item.get("timeframe") or primary_feed["timeframe"]),
+            "symbol": symbol,
+            "profile": str(item.get("profile") or primary_feed["profile"]),
+            **({"cache_root": item.get("cache_root")} if item.get("cache_root") else {}),
+        }
     return {
         "schema_version": 1,
         "workspace_root": str(workspace_root) if workspace_root is not None else None,
@@ -3607,6 +3745,11 @@ def build_branch_context(
         "outputs_dir": str((branch / "outputs").resolve()),
         "branch_spec_path": str(branch_spec_path(branch).resolve()),
         "dependencies_path": str(dependencies_path(branch).resolve()),
+        "runtime_profile_path": str(runtime_profile_path(branch).resolve()),
+        "execution_constraints_path": str(execution_constraints_path(branch).resolve()),
+        "data_manifest_path": str(data_manifest_path(branch).resolve()),
+        "context_guide_path": str(context_guide_path(branch).resolve()),
+        "probe_samples_path": str(probe_samples_path(branch).resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
         "readiness_path": str((session / READINESS_FILENAME).resolve()),
         "ticker": discovery.get("ticker", session.parent.name.upper()),
@@ -3615,7 +3758,12 @@ def build_branch_context(
         "dependencies": dependencies,
         "discovery": discovery,
         "readiness": readiness,
-        "_feeds": {"primary": primary_feed},
+        "runtime_profile": runtime_profile,
+        "execution_constraints": execution_constraints,
+        "data_manifest": data_manifest,
+        "_runtime_profile": runtime_profile,
+        "_execution_constraints": execution_constraints,
+        "_feeds": feeds,
     }
 
 
@@ -3809,6 +3957,38 @@ def dependencies_path(branch: Path) -> Path:
     return branch / "inputs" / DEPENDENCIES_FILENAME
 
 
+def runtime_profile_path(branch: Path) -> Path:
+    return branch / "inputs" / RUNTIME_PROFILE_FILENAME
+
+
+def execution_constraints_path(branch: Path) -> Path:
+    return branch / "inputs" / EXECUTION_CONSTRAINTS_FILENAME
+
+
+def data_manifest_path(branch: Path) -> Path:
+    return branch / "inputs" / DATA_MANIFEST_FILENAME
+
+
+def context_guide_path(branch: Path) -> Path:
+    return branch / "inputs" / CONTEXT_GUIDE_FILENAME
+
+
+def probe_samples_path(branch: Path) -> Path:
+    return branch / "inputs" / PROBE_SAMPLES_FILENAME
+
+
+def branch_inputs_ready(branch: Path) -> bool:
+    required = (
+        dependencies_path(branch),
+        runtime_profile_path(branch),
+        execution_constraints_path(branch),
+        data_manifest_path(branch),
+        context_guide_path(branch),
+        probe_samples_path(branch),
+    )
+    return all(path.exists() for path in required)
+
+
 def load_branch_spec(branch: Path) -> dict:
     path = branch_spec_path(branch)
     if not path.exists():
@@ -3888,6 +4068,143 @@ def branch_dependencies_payload(
         "data_requirements": branch_spec.get("data_requirements") or {"timeframe": "1d"},
         "prepared_at": _now(),
     }
+
+
+def build_runtime_profile_payload(*, target: str) -> dict:
+    return {
+        "profile": "daily",
+        "target": target,
+        "decision_event": "bar_close",
+        "execution_delay_bars": 1,
+        "return_basis": "close_to_close",
+    }
+
+
+def build_execution_constraints_payload(branch_spec: dict) -> dict:
+    payload = {"long_only": bool(branch_spec.get("long_only", False))}
+    position_bounds = branch_spec.get("position_bounds")
+    if isinstance(position_bounds, (list, tuple)) and len(position_bounds) == 2:
+        payload["position_bounds"] = [float(position_bounds[0]), float(position_bounds[1])]
+    return payload
+
+
+def build_data_manifest_payload(
+    *,
+    target: str,
+    selected_drivers: list[str],
+    cache_payload: dict,
+    readiness: dict,
+) -> dict:
+    cache_results = {
+        str(item.get("symbol") or "").strip().upper(): item
+        for item in (cache_payload.get("results") or [])
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+    }
+    readiness_results = {
+        str(item.get("ticker") or "").strip().upper(): item
+        for item in (readiness.get("results") or [])
+        if isinstance(item, dict) and str(item.get("ticker") or "").strip()
+    }
+    feeds: list[dict[str, object]] = []
+    ordered_symbols = [target] + [ticker for ticker in selected_drivers if ticker != target]
+    adapter = str(cache_payload.get("adapter") or "abel")
+    timeframe = str(cache_payload.get("timeframe") or "1d")
+    profile = str(cache_payload.get("profile") or "daily")
+    cache_root = cache_payload.get("cache_root")
+    for symbol in ordered_symbols:
+        cache_item = cache_results.get(symbol, {})
+        readiness_item = readiness_results.get(symbol, {})
+        feed_entry = {
+            "name": "primary" if symbol == target else symbol,
+            "symbol": symbol,
+            "role": "target" if symbol == target else "driver",
+            "adapter": adapter,
+            "timeframe": timeframe,
+            "profile": profile,
+            "ok": bool(cache_item.get("ok", False)),
+            "row_count": int(cache_item.get("row_count", 0) or 0),
+            "available_range": cache_item.get("available_range") or {},
+            "readiness_status": readiness_item.get("status", "unknown"),
+            "covers_requested_start": bool(readiness_item.get("covers_requested_start", False)),
+        }
+        if cache_root:
+            feed_entry["cache_root"] = cache_root
+        feeds.append(feed_entry)
+    return {
+        "version": 1,
+        "target": target,
+        "selected_drivers": selected_drivers,
+        "feeds": feeds,
+    }
+
+
+def build_probe_samples_payload(
+    *,
+    target: str,
+    requested_start: str,
+    data_manifest: dict,
+) -> dict:
+    feeds = data_manifest.get("feeds") or []
+    target_feed = next(
+        (item for item in feeds if item.get("role") == "target"),
+        {},
+    )
+    available_range = (target_feed.get("available_range") or {}) if isinstance(target_feed, dict) else {}
+    start = str(available_range.get("start") or requested_start or "").strip()
+    end = str(available_range.get("end") or start or "").strip()
+    samples: list[str] = []
+    if start and end:
+        try:
+            dates = pd.date_range(start=start, end=end, periods=3, tz="UTC")
+            samples = [str(ts.date()) for ts in dates]
+        except Exception:
+            samples = [item for item in [start, end] if item]
+    return {
+        "version": 1,
+        "target": target,
+        "requested_start": requested_start,
+        "sample_decision_dates": samples,
+    }
+
+
+def build_context_guide_markdown(
+    *,
+    target: str,
+    runtime_profile: dict,
+    execution_constraints: dict,
+    data_manifest: dict,
+) -> str:
+    feed_names = [
+        str(item.get("name"))
+        for item in (data_manifest.get("feeds") or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    lines = [
+        f"# {target} Branch Context Guide",
+        "",
+        "## Runtime",
+        f"- profile: `{runtime_profile.get('profile', 'daily')}`",
+        f"- decision_event: `{runtime_profile.get('decision_event', 'bar_close')}`",
+        f"- execution_delay_bars: `{runtime_profile.get('execution_delay_bars', 1)}`",
+        f"- return_basis: `{runtime_profile.get('return_basis', 'close_to_close')}`",
+        "",
+        "## Execution Constraints",
+        f"- long_only: `{execution_constraints.get('long_only', False)}`",
+        f"- position_bounds: `{execution_constraints.get('position_bounds', 'unbounded')}`",
+        "",
+        "## Available Feeds",
+        f"- names: `{', '.join(feed_names) or 'primary only'}`",
+        "- use `ctx.target.series(\"close\")` for target history",
+        "- use `ctx.feed(\"<name>\").asof_series(\"close\")` for aligned driver history",
+        "- use `ctx.points()` when you need path-sensitive cross-calendar logic",
+        "",
+        "## Suggested Loop",
+        "1. Inspect `probe_samples.json` and `data_manifest.json`.",
+        "2. Edit `engine.py` against `DecisionContext`.",
+        "3. Run `abel-alpha debug-branch --branch ...` first to read semantic preflight.",
+        "4. Only record a round after the branch expresses a real mechanism.",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def branch_state_path(branch: Path) -> Path:
@@ -4159,10 +4476,14 @@ def build_debug_snapshot(
     fallback_error = (
         completed.stderr.strip()
         or completed.stdout.strip()
-        or "Debug evaluation did not produce a structured result."
+        or "Debug preflight did not produce a structured result."
     )
     summary = failures[0] if failures else fallback_error.splitlines()[-1]
-    next_step = hints[0] if hints else "Fix the blocker in engine.py, then rerun `abel-alpha debug-branch`."
+    next_step = (
+        hints[0]
+        if hints
+        else "Fix the semantic blocker in engine.py, then rerun `abel-alpha debug-branch`."
+    )
     return {
         "updated_at": _now(),
         "returncode": str(completed.returncode),
