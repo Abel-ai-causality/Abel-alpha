@@ -20,6 +20,7 @@ guessing what data world it is in.
 - one default workspace: `abel-alpha-workspace`
 - one canonical runtime: `<workspace>/.venv`
 - one active research path under `research/`
+- one session-owned graph frontier in `frontier.json`
 - one default branch contract centered on prepared runtime inputs plus
   `DecisionContext`
 
@@ -44,8 +45,11 @@ serve different purposes.
 cd "$WORKSPACE_PATH"
 abel-alpha doctor
 abel-alpha init-session --ticker TSLA --exp-id tsla-v1 --discover
+abel-alpha frontier-status --session research/tsla/tsla-v1
+abel-alpha probe-nodes --session research/tsla/tsla-v1 --node TSLA.volume
+abel-alpha expand-frontier --session research/tsla/tsla-v1 --from-node TSLA.volume
 abel-alpha init-branch --session research/tsla/tsla-v1 --branch-id graph-v1
-edit research/tsla/tsla-v1/branches/graph-v1/branch.yaml
+abel-alpha select-inputs --branch research/tsla/tsla-v1/branches/graph-v1 --node TSLA.volume --replace
 abel-alpha prepare-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha debug-branch --branch research/tsla/tsla-v1/branches/graph-v1
 abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "baseline"
@@ -54,10 +58,26 @@ abel-alpha run-branch --branch research/tsla/tsla-v1/branches/graph-v1 -d "basel
 The important boundary is not the exact command list. The important boundary is
 the order of information:
 
-1. `branch.yaml` states the branch intent.
-2. `prepare-branch` materializes the branch runtime contract.
-3. `debug-branch` runs semantic preflight.
-4. `run-branch` records evidence only after the branch is semantically valid.
+1. inspect or expand the session frontier
+2. probe candidate nodes before committing to a branch thesis
+3. make `selected_inputs` explicit
+4. `prepare-branch` materializes the branch runtime contract
+5. `debug-branch` runs semantic preflight
+6. `run-branch` records evidence only after the branch is semantically valid
+
+If you change `selected_inputs`, `requested_start`, overlap, or execution
+constraints after a prepare, treat the old prepared bundle as stale and rerun
+`prepare-branch` before `debug-branch` or `run-branch`.
+
+When `init-session --discover` is slow, treat that as a discovery phase, not as
+proof that nothing happened. The command and generated session artifacts should
+now make the state explicit:
+
+- `pending`: live discovery was requested and is not recorded yet
+- `ready`: live discovery is recorded and the frontier is graph-backed
+- `seed_only`: live discovery has not been run for this session yet
+- `failed`: the last live discovery attempt failed and the session stayed
+  seed-only
 
 ## What `prepare-branch` Produces
 
@@ -66,12 +86,24 @@ the order of information:
 - `runtime_profile.json`
 - `execution_constraints.json`
 - `data_manifest.json`
+- `window_availability.json`
 - `context_guide.md`
 - `probe_samples.json`
 - `dependencies.json`
 
 Those files are not bookkeeping theater. They are the visible contract the
 agent writes against.
+
+`window_availability.json` now also makes the branch time cost legible:
+
+- `requested_start`
+- `target_safe_start`
+- `prepared_effective_start`
+- `avoidable_gap_days`
+- `limiting_inputs`
+
+Use that to decide whether the current frontier inputs are worth the extra time
+loss before you narrow the backtest window itself.
 
 ## What The Starter Engine Means
 
@@ -81,6 +113,8 @@ It should teach the branch-default authoring surface:
 
 - `compute_decisions(self, ctx)`
 - `ctx.target.series("close")`
+- `ctx.input(name).asof_series(...)`
+- `ctx.inputs_frame(...)`
 - `ctx.feed(name)...`
 - `ctx.points()`
 - `ctx.decisions(next_position)`

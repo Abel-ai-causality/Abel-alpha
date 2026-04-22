@@ -6,6 +6,7 @@ workspace setup into session and branch work.
 ## Branch Model
 
 - `discovery.json` is only the session candidate snapshot
+- `frontier.json` is the durable session exploration surface
 - `readiness.json` is only the session coverage/advisory report
 - `branch.yaml` defines the branch runtime intent
 - `prepare-branch` resolves inputs, writes the branch contract, and warms edge
@@ -24,6 +25,7 @@ The branch contract is materialized under `inputs/`:
 - `runtime_profile.json`
 - `execution_constraints.json`
 - `data_manifest.json`
+- `window_availability.json`
 - `context_guide.md`
 - `probe_samples.json`
 - `dependencies.json`
@@ -50,6 +52,7 @@ Write against the branch-default contract:
 
 - implement `compute_decisions(self, ctx)`
 - inspect `ctx.target.series("close")` for the tradeable target
+- inspect `ctx.input(name)...` or `ctx.inputs_frame(...)` for prepared auxiliary inputs
 - inspect `ctx.feed(name).native_series(...)` for native feed cadence
 - inspect `ctx.feed(name).asof_series(...)` when you need target-calendar as-of values
 - inspect `ctx.points()` when you need point-level reasoning or debugging
@@ -57,8 +60,10 @@ Write against the branch-default contract:
 
 Prefer prepared branch inputs over discovery-side inference:
 
+- inspect `frontier.json` first when deciding whether the branch still needs wider search
 - inspect `inputs/context_guide.md`
 - inspect `inputs/data_manifest.json`
+- inspect `inputs/window_availability.json`
 - inspect `inputs/probe_samples.json`
 - treat `runtime_profile.json` and `execution_constraints.json` as system-owned
   runtime facts, not something the strategy should guess or re-declare
@@ -74,12 +79,14 @@ around the contract.
 ## Recommended Loop
 
 1. State the branch thesis in `branch.yaml`.
-2. Run `prepare-branch`.
-3. Inspect `inputs/context_guide.md`, `probe_samples.json`, and `data_manifest.json`.
-4. Implement or revise `compute_decisions(self, ctx)`.
-5. Run `abel-alpha debug-branch --branch ...`.
-6. Read the semantic verdict and traces.
-7. Only then decide whether `run-branch` is justified.
+2. Probe or expand frontier nodes until the input set is worth testing.
+3. Run `select-inputs` or update `selected_inputs`.
+4. Run `prepare-branch`.
+5. Inspect `inputs/context_guide.md`, `window_availability.json`, `probe_samples.json`, and `data_manifest.json`.
+6. Implement or revise `compute_decisions(self, ctx)`.
+7. Run `abel-alpha debug-branch --branch ...`.
+8. Read the semantic verdict and traces.
+9. Only then decide whether `run-branch` is justified.
 
 ## Readiness
 

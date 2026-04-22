@@ -37,6 +37,7 @@ Keep the mental model simple:
 - one default workspace: `abel-alpha-workspace`
 - one canonical runtime: `<workspace>/.venv`
 - one active research path under `research/`
+- one session frontier stored in `frontier.json`
 - one default branch contract centered on prepared inputs plus `DecisionContext`
 
 Do not improvise workspace location, workspace name, runtime layout, or auth
@@ -94,8 +95,11 @@ work from inside it:
 cd "$WORKSPACE_PATH"
 abel-alpha doctor
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
+abel-alpha frontier-status --session research/<ticker>/<exp-id>
+abel-alpha probe-nodes --session research/<ticker>/<exp-id> --node <node_id>
+abel-alpha expand-frontier --session research/<ticker>/<exp-id> --from-node <node_id>
 abel-alpha init-branch --session research/<ticker>/<exp-id> --branch-id <branch-id>
-edit research/<ticker>/<exp-id>/branches/<branch-id>/branch.yaml
+abel-alpha select-inputs --branch research/<ticker>/<exp-id>/branches/<branch-id> --node <node_id> --replace
 abel-alpha prepare-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
 abel-alpha debug-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
@@ -103,17 +107,22 @@ abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -
 
 That path is orientation, not ritual. The important information order is:
 
-1. `branch.yaml` states the branch intent.
-2. `prepare-branch` writes the branch runtime contract under `inputs/`.
-3. `engine.py` is authored against `DecisionContext`, not raw loaders.
-4. `debug-branch` runs semantic preflight before a recorded round.
-5. `run-branch` records evidence only after the branch is semantically valid.
+1. inspect or expand the session frontier first
+2. probe promising nodes before you commit to a branch thesis
+3. make `selected_inputs` explicit for the branch
+4. `prepare-branch` writes the branch runtime contract under `inputs/`
+5. `engine.py` is authored against `DecisionContext`, not raw loaders
+6. `debug-branch` runs semantic preflight before a recorded round
+7. `run-branch` records evidence only after the branch is semantically valid
 
-`prepare-branch` now writes the concrete authoring contract:
+The concrete authoring contract now spans the session frontier plus prepared
+branch inputs:
 
+- `frontier.json`
 - `inputs/runtime_profile.json`
 - `inputs/execution_constraints.json`
 - `inputs/data_manifest.json`
+- `inputs/window_availability.json`
 - `inputs/context_guide.md`
 - `inputs/probe_samples.json`
 - `inputs/dependencies.json`
@@ -126,6 +135,8 @@ The default authoring surface is:
 
 - `compute_decisions(self, ctx)`
 - `ctx.target.series("close")`
+- `ctx.input(name).asof_series(...)`
+- `ctx.inputs_frame(...)`
 - `ctx.feed(name).native_series(...)`
 - `ctx.feed(name).asof_series(...)`
 - `ctx.points()`

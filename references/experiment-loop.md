@@ -16,10 +16,13 @@ Do not decide that "the workspace does not exist" by checking only whether
 
 ```bash
 abel-alpha init-session --ticker <TICKER> --exp-id <exp-id> --discover
+abel-alpha frontier-status --session research/<ticker>/<exp_id>
+abel-alpha probe-nodes --session research/<ticker>/<exp_id> --node <node_id>
+abel-alpha expand-frontier --session research/<ticker>/<exp_id> --from-node <node_id>
 abel-alpha init-branch --session research/<ticker>/<exp_id> --branch-id graph-v1
 
 # first make the branch explicit
-edit research/<ticker>/<exp_id>/branches/graph-v1/branch.yaml
+abel-alpha select-inputs --branch research/<ticker>/<exp_id>/branches/graph-v1 --node <node_id> --replace
 edit research/<ticker>/<exp_id>/branches/graph-v1/engine.py
 
 abel-alpha prepare-branch --branch research/<ticker>/<exp_id>/branches/graph-v1
@@ -37,7 +40,7 @@ Each round should answer a question about mechanism, not just consume compute.
 
 ## What Each Layer Owns
 
-- session: discovery and readiness
+- session: discovery, frontier expansion, and readiness
 - branch: branch spec and `compute_decisions(self, ctx)` implementation
 - edge cache: market data reuse
 - prepare step: branch input resolution and runtime contract materialization
@@ -58,6 +61,7 @@ Before a recorded round, the branch should already have:
 - `inputs/runtime_profile.json`
 - `inputs/execution_constraints.json`
 - `inputs/data_manifest.json`
+- `inputs/window_availability.json`
 - `inputs/context_guide.md`
 - `inputs/probe_samples.json`
 
