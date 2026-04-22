@@ -164,10 +164,16 @@ def test_run_branch_round_updates_memory_and_status(
             cache_payload=dependencies["cache"],
             readiness={},
         )
+        window_report = ni.build_window_availability_report(
+            requested_start="2020-01-01",
+            data_manifest=data_manifest,
+            overlap_mode="target_only",
+        )
         probe_samples = ni.build_probe_samples_payload(
             target_asset="TSLA",
             requested_start="2020-01-01",
             data_manifest=data_manifest,
+            window_report=window_report,
         )
         ni.runtime_profile_path(branch).write_text(
             json.dumps(runtime_profile),
@@ -181,6 +187,10 @@ def test_run_branch_round_updates_memory_and_status(
             json.dumps(data_manifest),
             encoding="utf-8",
         )
+        ni.window_availability_path(branch).write_text(
+            json.dumps(window_report),
+            encoding="utf-8",
+        )
         ni.probe_samples_path(branch).write_text(
             json.dumps(probe_samples),
             encoding="utf-8",
@@ -192,6 +202,7 @@ def test_run_branch_round_updates_memory_and_status(
                 runtime_profile=runtime_profile,
                 execution_constraints=execution_constraints,
                 data_manifest=data_manifest,
+                window_report=window_report,
             ),
             encoding="utf-8",
         )

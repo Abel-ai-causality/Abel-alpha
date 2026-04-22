@@ -155,3 +155,23 @@ def test_probe_nodes_command_updates_frontier_availability(tmp_path: Path, monke
     assert btc_entry is not None
     assert btc_entry["availability_summary"]["status"] == "partial_target_overlap"
     assert btc_entry["availability_summary"]["target_overlap_days"] == 2
+
+
+def test_select_branch_inputs_command_updates_branch_spec_from_frontier(tmp_path: Path) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v5", tmp_path / "research")
+    ni.write_discovery(session, _seed_discovery())
+    ni.write_frontier_state(session, ni.frontier_state_from_discovery(_seed_discovery()))
+    branch = ni.init_branch_dir(session, "graph-v1")
+
+    result = ni.select_branch_inputs_command(
+        branch=branch,
+        node_ids=["BTCUSD.price"],
+        replace=True,
+    )
+
+    spec = ni.load_branch_spec(branch)
+
+    assert result == 0
+    assert spec["selected_inputs"] == [
+        {"node_id": "BTCUSD.price", "asset": "BTCUSD", "field": "price"}
+    ]

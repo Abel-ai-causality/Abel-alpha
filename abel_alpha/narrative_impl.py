@@ -18,6 +18,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
 import yaml
 from causal_edge.graph_nodes import (
     GraphNodeRef,
@@ -74,6 +75,7 @@ DEPENDENCIES_FILENAME = "dependencies.json"
 RUNTIME_PROFILE_FILENAME = "runtime_profile.json"
 EXECUTION_CONSTRAINTS_FILENAME = "execution_constraints.json"
 DATA_MANIFEST_FILENAME = "data_manifest.json"
+WINDOW_AVAILABILITY_FILENAME = "window_availability.json"
 CONTEXT_GUIDE_FILENAME = "context_guide.md"
 PROBE_SAMPLES_FILENAME = "probe_samples.json"
 MEMORY_MANIFEST_FILENAME = "manifest.json"
@@ -506,6 +508,24 @@ def main() -> int:
     init_branch.add_argument("--session", required=True)
     init_branch.add_argument("--branch-id", required=True)
 
+    select_inputs = sub.add_parser(
+        "select-inputs",
+        help="Update branch selected_inputs from the session frontier",
+    )
+    select_inputs.add_argument("--branch", required=True)
+    select_inputs.add_argument(
+        "--node",
+        dest="nodes",
+        action="append",
+        required=True,
+        help="Graph node id to select (repeatable)",
+    )
+    select_inputs.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace selected_inputs instead of appending to the current list",
+    )
+
     prepare_branch = sub.add_parser(
         "prepare-branch",
         help="Resolve branch data dependencies and warm the edge cache before evaluation",
@@ -751,6 +771,12 @@ def main() -> int:
         print(f"  abel-alpha run-branch --branch {branch} -d \"baseline\"")
         print(f"  edit {branch / 'engine.py'}")
         return 0
+    if args.command == "select-inputs":
+        return select_branch_inputs_command(
+            branch=resolve_workspace_arg_path(args.branch),
+            node_ids=list(args.nodes or []),
+            replace=args.replace,
+        )
     if args.command == "prepare-branch":
         return prepare_branch_inputs(args)
     if args.command == "run-branch":
@@ -1566,6 +1592,60 @@ def probe_nodes_command(
     return 0
 
 
+def select_branch_inputs_command(
+    *,
+    branch: Path,
+    node_ids: list[str],
+    replace: bool,
+) -> int:
+    session = branch.parent.parent
+    frontier = load_frontier_state(session)
+    requested_refs = coerce_graph_node_refs(node_ids)
+    if not requested_refs:
+        raise RuntimeError("At least one valid graph node id is required.")
+    missing = [
+        ref.node_id
+        for ref in requested_refs
+        if find_frontier_entry(frontier, ref.node_id) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "select-inputs only accepts nodes already discovered in the session frontier. "
+            f"Missing: {', '.join(missing)}"
+        )
+    branch_spec = load_branch_spec(branch)
+    current = [] if replace else branch_selected_inputs(branch_spec)
+    merged = coerce_graph_node_refs([*current, *requested_refs])
+    branch_spec["selected_inputs"] = [ref.to_payload() for ref in merged]
+    with SessionLock(session):
+        write_branch_spec(branch, branch_spec)
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "branch_inputs_selected",
+                "branch_id": branch.name,
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"Updated selected_inputs for {branch.name}: "
+                    f"{', '.join(ref.node_id for ref in requested_refs)}"
+                ),
+                "artifact_path": str(branch_spec_path(branch).relative_to(session)),
+            },
+        )
+        render_session(session)
+    print(f"Updated branch inputs for {branch}")
+    print(f"  selected_inputs: {', '.join(ref.node_id for ref in merged)}")
+    print("")
+    print("From here:")
+    print(f"  abel-alpha prepare-branch --branch {branch}")
+    return 0
+
+
 def _dedupe_strings(values) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
@@ -1908,6 +1988,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     if not target_asset or not target_node:
         raise RuntimeError("Branch spec is missing a target ticker.")
     selected_inputs = branch_selected_inputs(branch_spec)
+    frontier_state = load_frontier_state(session)
     symbols = [target_asset]
     for asset in graph_node_assets(selected_inputs):
         if asset not in symbols:
@@ -1994,10 +2075,17 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         cache_payload=cache_payload,
         readiness=readiness,
     )
+    window_report = build_window_availability_report(
+        requested_start=requested_start,
+        data_manifest=data_manifest,
+        overlap_mode=str(branch_spec.get("overlap_mode") or "target_only"),
+        frontier_state=frontier_state,
+    )
     probe_samples = build_probe_samples_payload(
         target_asset=target_asset,
         requested_start=requested_start,
         data_manifest=data_manifest,
+        window_report=window_report,
     )
     runtime_profile_path(branch).write_text(
         json.dumps(runtime_profile, indent=2),
@@ -2011,6 +2099,10 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         json.dumps(data_manifest, indent=2),
         encoding="utf-8",
     )
+    window_availability_path(branch).write_text(
+        json.dumps(window_report, indent=2),
+        encoding="utf-8",
+    )
     probe_samples_path(branch).write_text(
         json.dumps(probe_samples, indent=2),
         encoding="utf-8",
@@ -2022,6 +2114,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
             runtime_profile=runtime_profile,
             execution_constraints=execution_constraints,
             data_manifest=data_manifest,
+            window_report=window_report,
         ),
         encoding="utf-8",
     )
@@ -2058,12 +2151,18 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     print(f"  runtime_profile: {runtime_profile_path(branch).relative_to(session)}")
     print(f"  execution_constraints: {execution_constraints_path(branch).relative_to(session)}")
     print(f"  data_manifest: {data_manifest_path(branch).relative_to(session)}")
+    print(f"  window_availability: {window_availability_path(branch).relative_to(session)}")
     print(f"  context_guide: {context_guide_path(branch).relative_to(session)}")
     print(f"  probe_samples: {probe_samples_path(branch).relative_to(session)}")
     print(f"  target_asset: {target_asset}")
     print(f"  target_node: {target_node}")
     print(f"  selected_inputs: {len(selected_inputs)}")
     print(f"  symbols: {', '.join(symbols)}")
+    effective_window = window_report.get("effective_window") or {}
+    print(
+        "  effective_window: "
+        f"{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}"
+    )
     print(f"  cache_results: ok={len(warm_ok)} fail={len(warm_fail)}")
     for line in advisory_lines:
         print(f"  {line}")
@@ -2122,6 +2221,7 @@ def promote_branch_bundle(args: argparse.Namespace) -> int:
         shutil.copy2(runtime_profile_path(branch), destination / RUNTIME_PROFILE_FILENAME)
         shutil.copy2(execution_constraints_path(branch), destination / EXECUTION_CONSTRAINTS_FILENAME)
         shutil.copy2(data_manifest_path(branch), destination / DATA_MANIFEST_FILENAME)
+        shutil.copy2(window_availability_path(branch), destination / WINDOW_AVAILABILITY_FILENAME)
         shutil.copy2(context_guide_path(branch), destination / CONTEXT_GUIDE_FILENAME)
         shutil.copy2(probe_samples_path(branch), destination / PROBE_SAMPLES_FILENAME)
 
@@ -2159,6 +2259,7 @@ def promote_branch_bundle(args: argparse.Namespace) -> int:
         print(f"  {destination / RUNTIME_PROFILE_FILENAME}")
         print(f"  {destination / EXECUTION_CONSTRAINTS_FILENAME}")
         print(f"  {destination / DATA_MANIFEST_FILENAME}")
+        print(f"  {destination / WINDOW_AVAILABILITY_FILENAME}")
         print(f"  {destination / CONTEXT_GUIDE_FILENAME}")
         print(f"  {destination / PROBE_SAMPLES_FILENAME}")
     print(f"  {destination / 'PROMOTION.md'}")
@@ -4086,6 +4187,9 @@ def branch_context_summary_lines(
     inputs_text = ", ".join(inputs) if inputs else "none"
     starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
     inputs_prepared = branch_inputs_ready(branch)
+    window_report = {}
+    if window_availability_path(branch).exists():
+        window_report = json.loads(window_availability_path(branch).read_text(encoding="utf-8"))
 
     lines = [
         f"target_asset={target}",
@@ -4106,6 +4210,14 @@ def branch_context_summary_lines(
     if dense_overlap:
         lines.append(f"dense_overlap_hint={dense_overlap}")
     lines.append(f"inputs_prepared={'yes' if inputs_prepared else 'no'}")
+    effective_window = (window_report or {}).get("effective_window") or {}
+    if effective_window:
+        lines.append(
+            "effective_window="
+            f"{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}"
+        )
+        limiting = ", ".join((window_report or {}).get("limiting_inputs") or []) or "none"
+        lines.append(f"limiting_inputs={limiting}")
     lines.append(
         "scaffold_status="
         + ("starter_scaffold" if starter_scaffold else "branch_specific_engine")
@@ -4349,6 +4461,14 @@ def build_branch_context(
     )
     if data_manifest_path(branch).exists():
         data_manifest = json.loads(data_manifest_path(branch).read_text(encoding="utf-8"))
+    window_report = build_window_availability_report(
+        requested_start=backtest_start,
+        data_manifest=data_manifest,
+        overlap_mode=str(branch_spec.get("overlap_mode") or "target_only"),
+        frontier_state=load_frontier_state(session),
+    )
+    if window_availability_path(branch).exists():
+        window_report = json.loads(window_availability_path(branch).read_text(encoding="utf-8"))
     cache = dependencies.get("cache") if isinstance(dependencies, dict) else {}
     primary_feed = {
         "name": "primary",
@@ -4398,6 +4518,7 @@ def build_branch_context(
         "runtime_profile_path": str(runtime_profile_path(branch).resolve()),
         "execution_constraints_path": str(execution_constraints_path(branch).resolve()),
         "data_manifest_path": str(data_manifest_path(branch).resolve()),
+        "window_availability_path": str(window_availability_path(branch).resolve()),
         "context_guide_path": str(context_guide_path(branch).resolve()),
         "probe_samples_path": str(probe_samples_path(branch).resolve()),
         "discovery_path": str((session / "discovery.json").resolve()),
@@ -4411,6 +4532,7 @@ def build_branch_context(
         "runtime_profile": runtime_profile,
         "execution_constraints": execution_constraints,
         "data_manifest": data_manifest,
+        "window_availability": window_report,
         "_runtime_profile": runtime_profile,
         "_execution_constraints": execution_constraints,
         "_feeds": feeds,
@@ -4667,6 +4789,10 @@ def data_manifest_path(branch: Path) -> Path:
     return branch / "inputs" / DATA_MANIFEST_FILENAME
 
 
+def window_availability_path(branch: Path) -> Path:
+    return branch / "inputs" / WINDOW_AVAILABILITY_FILENAME
+
+
 def context_guide_path(branch: Path) -> Path:
     return branch / "inputs" / CONTEXT_GUIDE_FILENAME
 
@@ -4681,6 +4807,7 @@ def branch_inputs_ready(branch: Path) -> bool:
         runtime_profile_path(branch),
         execution_constraints_path(branch),
         data_manifest_path(branch),
+        window_availability_path(branch),
         context_guide_path(branch),
         probe_samples_path(branch),
     )
@@ -4897,12 +5024,17 @@ def build_data_manifest_payload(
             "symbol": ref.asset,
             "role": role,
             "runtime_field": graph_node_runtime_field(ref),
+            "value_field": graph_node_runtime_field(ref),
+            "source_kind": "abel_market_bars",
+            "native_calendar": timeframe,
+            "alignment_mode": "asof_to_target_decision",
             "adapter": adapter,
             "timeframe": timeframe,
             "profile": profile,
             "ok": bool(cache_item.get("ok", False)),
             "row_count": int(cache_item.get("row_count", 0) or 0),
             "available_range": cache_item.get("available_range") or {},
+            "native_window": cache_item.get("available_range") or {},
             "readiness_status": readiness_item.get("status", "unknown"),
             "covers_requested_start": bool(readiness_item.get("covers_requested_start", False)),
         }
@@ -4924,20 +5056,103 @@ def build_data_manifest_payload(
     }
 
 
+def build_window_availability_report(
+    *,
+    requested_start: str,
+    data_manifest: dict,
+    overlap_mode: str,
+    frontier_state: dict | None = None,
+) -> dict:
+    feeds = [item for item in (data_manifest.get("feeds") or []) if isinstance(item, dict)]
+    target_feed = next((item for item in feeds if item.get("role") == "target"), {})
+    target_window = dict(target_feed.get("native_window") or target_feed.get("available_range") or {})
+    requested_start_ts = _coerce_utc_timestamp(requested_start)
+    target_start_ts = _coerce_utc_timestamp(target_window.get("start"))
+    target_end_ts = _coerce_utc_timestamp(target_window.get("end"))
+    start_candidates = [item for item in [requested_start_ts, target_start_ts] if item is not None]
+    end_candidates = [item for item in [target_end_ts] if item is not None]
+    per_input_coverage: list[dict[str, object]] = []
+
+    for feed in feeds:
+        if str(feed.get("role") or "") != "input":
+            continue
+        node_id = str(feed.get("node_id") or "").strip()
+        feed_window = dict(feed.get("native_window") or feed.get("available_range") or {})
+        frontier_entry = find_frontier_entry(frontier_state or {}, node_id) if frontier_state else None
+        availability = (frontier_entry or {}).get("availability_summary") or {}
+        effective_start_source = (
+            availability.get("first_usable_target_time")
+            or feed_window.get("start")
+        )
+        effective_start_ts = _coerce_utc_timestamp(effective_start_source)
+        effective_end_ts = _coerce_utc_timestamp(feed_window.get("end"))
+        if effective_start_ts is not None:
+            start_candidates.append(effective_start_ts)
+        if effective_end_ts is not None:
+            end_candidates.append(effective_end_ts)
+        per_input_coverage.append(
+            {
+                "node_id": node_id,
+                "field": feed.get("field"),
+                "native_start": feed_window.get("start"),
+                "native_end": feed_window.get("end"),
+                "effective_start": effective_start_ts.isoformat() if effective_start_ts is not None else None,
+                "effective_start_source": (
+                    "probe_first_usable_target_time"
+                    if availability.get("first_usable_target_time")
+                    else "native_window_start"
+                ),
+                "status": availability.get("status") or feed.get("readiness_status") or "unknown",
+                "target_overlap_days": int(availability.get("target_overlap_days", 0) or 0),
+                "target_decision_days": int(availability.get("target_decision_days", 0) or 0),
+            }
+        )
+
+    effective_start_ts = max(start_candidates) if start_candidates else None
+    effective_end_ts = min(end_candidates) if end_candidates else None
+    limiting_inputs = [
+        item["node_id"]
+        for item in per_input_coverage
+        if item.get("effective_start") == (effective_start_ts.isoformat() if effective_start_ts is not None else None)
+        or item.get("native_end") == (effective_end_ts.isoformat() if effective_end_ts is not None else None)
+    ]
+    return {
+        "version": 1,
+        "target_node": data_manifest.get("target_node"),
+        "requested_start": requested_start,
+        "requested_end": None,
+        "overlap_mode": overlap_mode,
+        "target_window": target_window,
+        "effective_window": {
+            "start": effective_start_ts.isoformat() if effective_start_ts is not None else None,
+            "end": effective_end_ts.isoformat() if effective_end_ts is not None else None,
+        },
+        "limiting_inputs": _dedupe_strings(limiting_inputs),
+        "per_input_coverage": per_input_coverage,
+    }
+
+
 def build_probe_samples_payload(
     *,
     target_asset: str,
     requested_start: str,
     data_manifest: dict,
+    window_report: dict | None = None,
 ) -> dict:
-    feeds = data_manifest.get("feeds") or []
-    target_feed = next(
-        (item for item in feeds if item.get("role") == "target"),
-        {},
-    )
-    available_range = (target_feed.get("available_range") or {}) if isinstance(target_feed, dict) else {}
-    start = str(available_range.get("start") or requested_start or "").strip()
-    end = str(available_range.get("end") or start or "").strip()
+    effective_window = (window_report or {}).get("effective_window") or {}
+    target_window = (window_report or {}).get("target_window") or {}
+    start = str(
+        effective_window.get("start")
+        or target_window.get("start")
+        or requested_start
+        or ""
+    ).strip()
+    end = str(
+        effective_window.get("end")
+        or target_window.get("end")
+        or start
+        or ""
+    ).strip()
     samples: list[str] = []
     if start and end:
         try:
@@ -4961,6 +5176,7 @@ def build_context_guide_markdown(
     runtime_profile: dict,
     execution_constraints: dict,
     data_manifest: dict,
+    window_report: dict | None = None,
 ) -> str:
     feed_names = [
         str(item.get("name"))
@@ -4974,6 +5190,18 @@ def build_context_guide_markdown(
         for item in (data_manifest.get("feeds") or [])
         if isinstance(item, dict) and str(item.get("name") or "").strip() and str(item.get("name")) != "primary"
     ]
+    feed_details = [
+        (
+            f"- `{item.get('name')}` -> "
+            f"`{item.get('field')}` on `{item.get('native_calendar', item.get('timeframe', '1d'))}`, "
+            f"runtime `{item.get('runtime_field', 'close')}`, "
+            f"native `{((item.get('native_window') or {}).get('start') or 'n/a')}` -> "
+            f"`{((item.get('native_window') or {}).get('end') or 'n/a')}`"
+        )
+        for item in (data_manifest.get("feeds") or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    effective_window = (window_report or {}).get("effective_window") or {}
     lines = [
         f"# {target_asset} Branch Context Guide",
         "",
@@ -4989,20 +5217,36 @@ def build_context_guide_markdown(
         f"- long_only: `{execution_constraints.get('long_only', False)}`",
         f"- position_bounds: `{execution_constraints.get('position_bounds', 'unbounded')}`",
         "",
+        "## Window Availability",
+        f"- requested_start: `{(window_report or {}).get('requested_start', 'unknown')}`",
+        f"- effective_window: `{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}`",
+        f"- limiting_inputs: `{', '.join((window_report or {}).get('limiting_inputs') or []) or 'none'}`",
+        "",
         "## Available Feeds",
         f"- names: `{', '.join(feed_names) or 'primary only'}`",
         f"- use `ctx.target.series(\"{graph_node_runtime_field(target_node.rpartition('.')[2] or 'price')}\")` for the target node",
         "- each non-primary feed is named by its graph node id",
         "- use `ctx.points()` when you need path-sensitive cross-calendar logic",
+        *feed_details[:8],
         *feed_examples[:6],
         "",
         "## Suggested Loop",
-        "1. Inspect `probe_samples.json` and `data_manifest.json`.",
+        "1. Inspect `window_availability.json`, `probe_samples.json`, and `data_manifest.json`.",
         "2. Edit `engine.py` against `DecisionContext`.",
         "3. Run `abel-alpha debug-branch --branch ...` first to read semantic preflight.",
         "4. Only record a round after the branch expresses a real mechanism.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _coerce_utc_timestamp(value: object) -> pd.Timestamp | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    ts = pd.Timestamp(text)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
 
 
 def branch_state_path(branch: Path) -> Path:

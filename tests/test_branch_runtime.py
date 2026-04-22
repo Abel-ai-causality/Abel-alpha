@@ -161,6 +161,29 @@ def _write_runtime_files(branch: Path) -> None:
         ),
         encoding="utf-8",
     )
+    ni.window_availability_path(branch).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "target_node": "TSLA.price",
+                "requested_start": "2020-01-01",
+                "requested_end": None,
+                "overlap_mode": "target_only",
+                "target_window": {
+                    "start": "2020-01-01T00:00:00+00:00",
+                    "end": "2020-12-31T00:00:00+00:00",
+                },
+                "effective_window": {
+                    "start": "2020-03-01T00:00:00+00:00",
+                    "end": "2020-12-31T00:00:00+00:00",
+                },
+                "limiting_inputs": ["MSFT.price"],
+                "per_input_coverage": [],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     ni.probe_samples_path(branch).write_text(
         json.dumps(
             {
@@ -248,6 +271,7 @@ def test_prepare_branch_inputs_writes_runtime_contract_artifacts(tmp_path, monke
 
     runtime_profile = json.loads(ni.runtime_profile_path(branch).read_text(encoding="utf-8"))
     data_manifest = json.loads(ni.data_manifest_path(branch).read_text(encoding="utf-8"))
+    window_report = json.loads(ni.window_availability_path(branch).read_text(encoding="utf-8"))
     probe_samples = json.loads(ni.probe_samples_path(branch).read_text(encoding="utf-8"))
     context_guide = ni.context_guide_path(branch).read_text(encoding="utf-8")
 
@@ -256,9 +280,12 @@ def test_prepare_branch_inputs_writes_runtime_contract_artifacts(tmp_path, monke
     assert [feed["name"] for feed in data_manifest["feeds"]] == ["primary", "TSLA.volume", "MSFT.price"]
     assert data_manifest["selected_inputs"][0]["node_id"] == "TSLA.volume"
     assert data_manifest["feeds"][1]["runtime_field"] == "volume"
+    assert data_manifest["feeds"][1]["alignment_mode"] == "asof_to_target_decision"
+    assert window_report["effective_window"]["start"] == "2020-03-01T00:00:00+00:00"
     assert probe_samples["target_asset"] == "TSLA"
     assert len(probe_samples["sample_decision_dates"]) >= 2
     assert "DecisionContext" in context_guide
+    assert "window_availability.json" in context_guide
     assert 'ctx.feed("TSLA.volume").asof_series("volume")' in context_guide
 
 
