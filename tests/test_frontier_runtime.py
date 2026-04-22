@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from argparse import Namespace
+import json
+import subprocess
 
 from abel_alpha import narrative_impl as ni
 
@@ -110,6 +113,18 @@ def test_render_session_includes_graph_frontier_section(tmp_path: Path) -> None:
     assert "TSLA.volume" in readme
 
 
+def test_session_readme_guides_agent_into_probe_first_loop(tmp_path: Path) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v3b", tmp_path / "research")
+    ni.write_discovery(session, _seed_discovery())
+    ni.write_frontier_state(session, ni.frontier_state_from_discovery(_seed_discovery()))
+
+    ni.render_session(session)
+
+    readme = (session / "README.md").read_text(encoding="utf-8")
+    assert "abel-alpha frontier-status" in readme
+    assert "abel-alpha probe-nodes" in readme
+
+
 def test_probe_nodes_command_updates_frontier_availability(tmp_path: Path, monkeypatch) -> None:
     session = ni.init_session_dir("TSLA", "frontier-v4", tmp_path / "research")
     ni.write_discovery(session, _seed_discovery())
@@ -175,3 +190,116 @@ def test_select_branch_inputs_command_updates_branch_spec_from_frontier(tmp_path
     assert spec["selected_inputs"] == [
         {"node_id": "BTCUSD.price", "asset": "BTCUSD", "field": "price"}
     ]
+
+
+def test_probe_select_prepare_flow_supports_volume_and_crypto_inputs(tmp_path: Path, monkeypatch) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v6", tmp_path / "research")
+    ni.write_discovery(session, _seed_discovery())
+    ni.write_readiness(
+        session,
+        {
+            "results": [
+                {"ticker": "TSLA", "status": "full", "usable": True, "covers_requested_start": True},
+                {"ticker": "BTCUSD", "status": "partial", "usable": True, "covers_requested_start": False},
+            ]
+        },
+    )
+    ni.write_frontier_state(session, ni.frontier_state_from_discovery(_seed_discovery()))
+
+    monkeypatch.setattr(
+        ni,
+        "run_edge_probe_data",
+        lambda **kwargs: {
+            "target": {"node_id": "TSLA.price"},
+            "requested_window": {"start": "2020-01-01", "end": None},
+            "basket": {"dense_overlap_start": "2020-03-02T00:00:00+00:00", "limiting_inputs": ["BTCUSD.price"]},
+            "results": [
+                {
+                    "node_id": "TSLA.volume",
+                    "status": "full_target_overlap",
+                    "row_count": 200,
+                    "native_window": {
+                        "start": "2020-01-01T00:00:00+00:00",
+                        "end": "2020-12-31T00:00:00+00:00",
+                    },
+                    "target_overlap_days": 200,
+                    "target_decision_days": 200,
+                    "first_usable_target_time": "2020-01-01T00:00:00+00:00",
+                },
+                {
+                    "node_id": "BTCUSD.price",
+                    "status": "partial_target_overlap",
+                    "row_count": 180,
+                    "native_window": {
+                        "start": "2020-03-02T00:00:00+00:00",
+                        "end": "2020-12-31T00:00:00+00:00",
+                    },
+                    "target_overlap_days": 160,
+                    "target_decision_days": 200,
+                    "first_usable_target_time": "2020-03-02T00:00:00+00:00",
+                },
+            ],
+        },
+    )
+    ni.probe_nodes_command(
+        session=session,
+        node_ids=["TSLA.volume", "BTCUSD.price"],
+        start=None,
+        end=None,
+        limit=500,
+    )
+
+    branch = ni.init_branch_dir(session, "graph-v1")
+    ni.select_branch_inputs_command(
+        branch=branch,
+        node_ids=["TSLA.volume", "BTCUSD.price"],
+        replace=True,
+    )
+
+    def fake_subprocess_run(command, cwd=None, capture_output=None, text=None, env=None):
+        output_path = Path(command[command.index("--output-json") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "adapter": "abel",
+                    "timeframe": "1d",
+                    "profile": "daily",
+                    "results": [
+                        {
+                            "symbol": "TSLA",
+                            "ok": True,
+                            "row_count": 220,
+                            "available_range": {"start": "2020-01-01", "end": "2020-12-31"},
+                        },
+                        {
+                            "symbol": "BTCUSD",
+                            "ok": True,
+                            "row_count": 250,
+                            "available_range": {"start": "2020-03-02", "end": "2020-12-31"},
+                        },
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ni.subprocess, "run", fake_subprocess_run)
+
+    result = ni.prepare_branch_inputs(
+        Namespace(
+            branch=str(branch),
+            python_bin="python3",
+            cache_limit=400,
+        )
+    )
+
+    window_report = json.loads(ni.window_availability_path(branch).read_text(encoding="utf-8"))
+    data_manifest = json.loads(ni.data_manifest_path(branch).read_text(encoding="utf-8"))
+
+    assert result == 0
+    assert window_report["effective_window"]["start"] == "2020-03-02T00:00:00+00:00"
+    assert "BTCUSD.price" in window_report["limiting_inputs"]
+    assert any(feed["node_id"] == "TSLA.volume" for feed in data_manifest["feeds"])
+    assert any(feed["node_id"] == "BTCUSD.price" for feed in data_manifest["feeds"])
