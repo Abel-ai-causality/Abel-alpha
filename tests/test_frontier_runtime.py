@@ -125,6 +125,70 @@ def test_session_readme_guides_agent_into_probe_first_loop(tmp_path: Path) -> No
     assert "abel-alpha probe-nodes" in readme
 
 
+def test_seed_only_session_records_explicit_discovery_state(tmp_path: Path) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v3c", tmp_path / "research")
+
+    discovery_state = ni.load_discovery_state(session)
+    readme = (session / "README.md").read_text(encoding="utf-8")
+
+    assert discovery_state["status"] == "seed_only"
+    assert discovery_state["frontier_mode"] == "seed_only"
+    assert "discovery_status: `seed_only`" in readme
+    assert "first branch will start target-only" in readme
+
+
+def test_live_discovery_session_records_ready_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(ni, "fetch_live_discovery", lambda ticker, limit: _seed_discovery())
+    monkeypatch.setattr(ni, "refresh_data_readiness", lambda **kwargs: None)
+
+    session = ni.init_session_dir(
+        "TSLA",
+        "frontier-v3d",
+        tmp_path / "research",
+        discover=True,
+    )
+
+    discovery_state = ni.load_discovery_state(session)
+    readme = (session / "README.md").read_text(encoding="utf-8")
+
+    assert discovery_state["status"] == "ready"
+    assert discovery_state["frontier_mode"] == "graph"
+    assert "discovery_status: `ready`" in readme
+    assert "frontier_mode: `graph`" in readme
+
+
+def test_failed_live_discovery_attempt_stays_visible(tmp_path: Path, monkeypatch, capsys) -> None:
+    def _raise_discovery(*_args, **_kwargs):
+        raise RuntimeError("auth missing for test")
+
+    monkeypatch.setattr(ni, "fetch_live_discovery", _raise_discovery)
+
+    session = ni.init_session_dir(
+        "TSLA",
+        "frontier-v3e",
+        tmp_path / "research",
+        discover=True,
+    )
+
+    discovery_state = ni.load_discovery_state(session)
+    frontier = ni.load_frontier_state(session)
+    readme = (session / "README.md").read_text(encoding="utf-8")
+
+    assert discovery_state["status"] == "failed"
+    assert discovery_state["frontier_mode"] == "seed_only"
+    assert [item["node_id"] for item in frontier["nodes"]] == ["TSLA.price"]
+    assert "discovery_status: `failed`" in readme
+    assert "last_error: `auth missing for test`" in readme
+
+    result = ni.print_frontier_status(session=session)
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "discovery_status: failed" in output
+    assert "frontier_mode: seed_only" in output
+    assert "discovery_error: auth missing for test" in output
+
+
 def test_probe_nodes_command_updates_frontier_availability(tmp_path: Path, monkeypatch) -> None:
     session = ni.init_session_dir("TSLA", "frontier-v4", tmp_path / "research")
     ni.write_discovery(session, _seed_discovery())

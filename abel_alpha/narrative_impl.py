@@ -67,6 +67,7 @@ EVENTS_HEADER = [
 
 DEFAULT_BACKTEST_START = "2020-01-01"
 SESSION_STATE_FILENAME = "session_state.json"
+DISCOVERY_STATE_SESSION_KEY = "discovery_state"
 FRONTIER_STATE_FILENAME = "frontier.json"
 BRANCH_STATE_FILENAME = "branch_state.json"
 READINESS_FILENAME = "readiness.json"
@@ -612,16 +613,30 @@ def main() -> int:
     if args.command == "doctor":
         return handle_doctor_command(args)
     if args.command == "init-session":
+        session_root = resolve_session_root(args.root)
+        session_preview = session_root / args.ticker.lower() / args.exp_id
+        if args.discover:
+            print(f"Initializing Abel-alpha session at {session_preview}")
+            print("  discovery_status: pending")
+            print("  discovery_note: running live Abel discovery now; this may take a little while")
+            print("")
+            sys.stdout.flush()
         session = init_session_dir(
             args.ticker,
             args.exp_id,
-            resolve_session_root(args.root),
+            session_root,
             discover=args.discover,
             discover_limit=args.discover_limit,
             backtest_start=args.backtest_start,
         )
         discovery = load_discovery(session)
         readiness = load_readiness(session)
+        frontier = load_frontier_state(session)
+        discovery_state = load_discovery_state(
+            session,
+            discovery=discovery,
+            frontier=frontier,
+        )
         print(f"Created Abel-alpha session at {session}")
         print(f"  ticker: {discovery.get('ticker', args.ticker.upper())}")
         print(f"  discovery: {session / 'discovery.json'}")
@@ -629,7 +644,18 @@ def main() -> int:
         print(f"  events: {session / 'events.tsv'}")
         if readiness:
             print(f"  readiness: {session / READINESS_FILENAME}")
-        if args.discover:
+        print(f"  discovery_status: {discovery_state.get('status', 'unknown')}")
+        print(f"  frontier_mode: {discovery_state.get('frontier_mode', 'unknown')}")
+        print(
+            f"  discovery_note: "
+            f"{summarize_status_text(discovery_state.get('message', '')) or 'n/a'}"
+        )
+        if discovery_state.get("error"):
+            print(
+                f"  discovery_error: "
+                f"{summarize_status_text(discovery_state.get('error', ''))}"
+            )
+        if discovery_state.get("status") == "ready":
             print(
                 f"  discovery_source: {discovery.get('source', 'unknown')} "
                 f"(K={discovery.get('K_discovery', 0)})"
@@ -642,6 +668,8 @@ def main() -> int:
             warning = build_readiness_warning(readiness)
             if warning:
                 print(f"  warning: {warning}")
+        elif discovery_state.get("status") == "failed":
+            print("  discovery_source: pending (last live discovery attempt failed)")
         else:
             print("  discovery_source: pending (live discovery not run)")
         print("")
@@ -1053,28 +1081,59 @@ def init_session_dir(
     session.mkdir(parents=True, exist_ok=True)
     discovery_data = None
     readiness_report = None
-    if discover:
-        discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
-        discovery_data["backtest"] = {"start": backtest_start}
-        readiness_report = refresh_data_readiness(
-            session=session,
-            discovery_data=discovery_data,
-            backtest_start=backtest_start,
-        )
+    discovery_error: str | None = None
     with SessionLock(session):
         write_tsv_header(session / "events.tsv", EVENTS_HEADER)
         if not session_state_path(session).exists():
             write_session_state(session, {})
         discovery_path = session / "discovery.json"
-        if discovery_data is not None:
-            write_discovery(session, discovery_data)
-        elif not discovery_path.exists():
-            write_discovery(session, build_pending_discovery_payload(ticker, backtest_start=backtest_start))
-        if discovery_data is not None or not frontier_state_path(session).exists():
+        if not discovery_path.exists():
+            write_discovery(
+                session,
+                build_pending_discovery_payload(
+                    ticker,
+                    backtest_start=backtest_start,
+                ),
+            )
+        if not frontier_state_path(session).exists():
             frontier_state = frontier_state_from_discovery(load_discovery(session))
             write_frontier_state(session, frontier_state)
-        if readiness_report is not None:
-            write_readiness(session, readiness_report)
+        discovery = load_discovery(session)
+        frontier = load_frontier_state(session)
+        if discover:
+            write_discovery_state(
+                session,
+                discovery=discovery,
+                frontier=frontier,
+                status="pending",
+                mode="live",
+                requested_live_discovery=True,
+                message="Running live Abel discovery now.",
+            )
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "discovery_requested",
+                    "branch_id": "",
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": "Requested live Abel discovery for this session",
+                    "artifact_path": SESSION_STATE_FILENAME,
+                },
+            )
+        else:
+            write_discovery_state(
+                session,
+                discovery=discovery,
+                frontier=frontier,
+                status="seed_only",
+                mode="deferred",
+                requested_live_discovery=False,
+            )
         append_tsv_row(
             session / "events.tsv",
             EVENTS_HEADER,
@@ -1090,7 +1149,61 @@ def init_session_dir(
                 "artifact_path": "",
             },
         )
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "frontier_seeded",
+                "branch_id": "",
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": "Seeded graph frontier from the current discovery snapshot",
+                "artifact_path": FRONTIER_STATE_FILENAME,
+            },
+        )
+
+    if discover:
+        try:
+            discovery_data = fetch_live_discovery(ticker, limit=discover_limit)
+        except RuntimeError as exc:
+            discovery_error = str(exc)
+        else:
+            discovery_data["backtest"] = {"start": backtest_start}
+            readiness_report = refresh_data_readiness(
+                session=session,
+                discovery_data=discovery_data,
+                backtest_start=backtest_start,
+            )
+
+    with SessionLock(session):
+        discovery_path = session / "discovery.json"
         if discovery_data is not None:
+            write_discovery(session, discovery_data)
+            frontier_state = frontier_state_from_discovery(discovery_data)
+            write_frontier_state(session, frontier_state)
+        else:
+            frontier_state = load_frontier_state(session)
+        if readiness_report is not None:
+            write_readiness(session, readiness_report)
+        discovery = load_discovery(session)
+        frontier = load_frontier_state(session)
+        if discovery_data is not None:
+            write_discovery_state(
+                session,
+                discovery=discovery,
+                frontier=frontier,
+                status="ready",
+                mode="live",
+                requested_live_discovery=True,
+                message=(
+                    f"Recorded live Abel discovery via "
+                    f"{discovery.get('source', 'unknown')} "
+                    f"with K={discovery.get('K_discovery', 0)}."
+                ),
+            )
             append_tsv_row(
                 session / "events.tsv",
                 EVENTS_HEADER,
@@ -1108,21 +1221,31 @@ def init_session_dir(
                     "artifact_path": str(discovery_path.relative_to(session)),
                 },
             )
-        append_tsv_row(
-            session / "events.tsv",
-            EVENTS_HEADER,
-            {
-                "timestamp": _now(),
-                "event": "frontier_seeded",
-                "branch_id": "",
-                "round_id": "",
-                "mode": "",
-                "verdict": "",
-                "decision": "",
-                "description": "Seeded graph frontier from the current discovery snapshot",
-                "artifact_path": FRONTIER_STATE_FILENAME,
-            },
-        )
+        elif discovery_error:
+            write_discovery_state(
+                session,
+                discovery=discovery,
+                frontier=frontier,
+                status="failed",
+                mode="live",
+                requested_live_discovery=True,
+                error=discovery_error,
+            )
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "discovery_failed",
+                    "branch_id": "",
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": summarize_status_text(discovery_error),
+                    "artifact_path": SESSION_STATE_FILENAME,
+                },
+            )
         if readiness_report:
             append_tsv_row(
                 session / "events.tsv",
@@ -1415,8 +1538,21 @@ def record_frontier_expansion(
 
 
 def print_frontier_status(*, session: Path, node_id: str | None = None) -> int:
+    discovery = load_discovery(session)
     frontier = load_frontier_state(session)
+    discovery_state = load_discovery_state(
+        session,
+        discovery=discovery,
+        frontier=frontier,
+    )
     print(f"Session frontier: {session}")
+    print(f"  discovery_status: {discovery_state.get('status', 'unknown')}")
+    print(f"  frontier_mode: {discovery_state.get('frontier_mode', 'unknown')}")
+    note = summarize_status_text(discovery_state.get("message", ""))
+    if note:
+        print(f"  discovery_note: {note}")
+    if discovery_state.get("error"):
+        print(f"  discovery_error: {summarize_status_text(discovery_state.get('error', ''))}")
     for line in frontier_summary_lines(frontier):
         key, _, value = line.partition("=")
         print(f"  {key}: {value}")
@@ -2914,6 +3050,11 @@ def build_session_readme(
     frontier: dict,
     branches: list[dict],
 ) -> str:
+    discovery_state = load_discovery_state(
+        session,
+        discovery=discovery,
+        frontier=frontier,
+    )
     keep_branches = [
         branch
         for branch in branches
@@ -3024,6 +3165,8 @@ generated by Abel-alpha narrative layer
 - exp_id: `{session.name}`
 - started_at: `{discovery.get("created_at", "unknown")}`
 - discovery_source: `{discovery.get("source", "unknown")}`
+- discovery_status: `{discovery_state.get("status", "unknown")}`
+- frontier_mode: `{discovery_state.get("frontier_mode", "unknown")}`
 - backtest_start: `{_get_backtest_start(discovery)}`
 - current_status: `{"has_keep" if keep_branches else "active" if branches else "exploring"}`
 - branch_count: `{len(branches)}`
@@ -3031,6 +3174,13 @@ generated by Abel-alpha narrative layer
 ## Session Goal
 
 Explore {discovery.get("ticker", session.parent.name.upper())} in session `{session.name}` using discovery source `{discovery.get("source", "unknown")}` and compare candidate branches through validated rounds.
+
+## Discovery State
+
+- status: `{discovery_state.get("status", "unknown")}`
+- frontier_mode: `{discovery_state.get("frontier_mode", "unknown")}`
+- note: `{summarize_status_text(discovery_state.get("message", "")) or "n/a"}`
+{"- last_error: `" + summarize_status_text(discovery_state.get("error", "")) + "`" if discovery_state.get("error") else ""}
 
 ## Discovery Readiness
 
@@ -4652,7 +4802,33 @@ def session_next_step(
     frontier: dict | None = None,
 ) -> str:
     frontier_state = frontier or load_frontier_state(session)
+    discovery_state = load_discovery_state(
+        session,
+        discovery=discovery,
+        frontier=frontier_state,
+    )
     if not branches:
+        if discovery_state.get("status") == "failed":
+            return (
+                f"The last live discovery attempt failed and this session is still "
+                f"`{discovery_state.get('frontier_mode', 'seed_only')}`. Retry "
+                f"`abel-alpha init-session --ticker {discovery.get('ticker', session.parent.name.upper())} "
+                f"--exp-id {session.name} --discover` once auth or runtime issues "
+                "are resolved, or continue intentionally with "
+                f"`abel-alpha init-branch --session {session} --branch-id graph-v1` "
+                "knowing the first branch will stay target-only."
+            )
+        if discovery_state.get("status") in {"seed_only", "pending"}:
+            return (
+                f"This session is currently "
+                f"`{discovery_state.get('frontier_mode', 'seed_only')}` because "
+                "live discovery is not recorded yet. If you want a graph-backed "
+                "frontier, rerun "
+                f"`abel-alpha init-session --ticker {discovery.get('ticker', session.parent.name.upper())} "
+                f"--exp-id {session.name} --discover`; otherwise continue with "
+                f"`abel-alpha init-branch --session {session} --branch-id graph-v1` "
+                "knowing the first branch will start target-only."
+            )
         frontier_nodes = frontier_candidate_nodes(frontier_state)
         if frontier_nodes:
             preview = ", ".join(ref.node_id for ref in frontier_nodes[:3])
@@ -5309,6 +5485,160 @@ def write_session_state(session: Path, payload: dict) -> None:
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+
+
+def frontier_mode(frontier_state: dict, *, discovery: dict | None = None) -> str:
+    target_node = branch_target_node({}, discovery or frontier_state)
+    for item in frontier_state.get("nodes") or []:
+        node_id = str(item.get("node_id") or "").strip()
+        if node_id and node_id != target_node:
+            return "graph"
+    return "seed_only"
+
+
+def summarize_status_text(value: str | None, *, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3].rstrip()}..."
+
+
+def default_discovery_state_message(
+    status: str,
+    *,
+    discovery: dict,
+    frontier: dict,
+) -> str:
+    source = str(discovery.get("source") or "unknown").strip()
+    mode = frontier_mode(frontier, discovery=discovery)
+    if status == "ready":
+        return (
+            f"Live Abel discovery is recorded from {source}; "
+            f"frontier mode is {mode}."
+        )
+    if status == "pending":
+        return (
+            "Live discovery has been requested; the session stays seed-only "
+            "until results are recorded."
+        )
+    if status == "failed":
+        return (
+            "The last live discovery attempt failed; the session remains "
+            "seed-only until you retry."
+        )
+    return "Live discovery has not been run for this session yet."
+
+
+def build_discovery_state_payload(
+    *,
+    discovery: dict,
+    frontier: dict,
+    status: str,
+    mode: str,
+    requested_live_discovery: bool,
+    message: str | None = None,
+    error: str | None = None,
+    updated_at: str | None = None,
+) -> dict:
+    payload = {
+        "status": status,
+        "mode": mode,
+        "requested_live_discovery": bool(requested_live_discovery),
+        "frontier_mode": frontier_mode(frontier, discovery=discovery),
+        "discovery_source": str(discovery.get("source") or "unknown").strip() or "unknown",
+        "target_node": branch_target_node({}, discovery),
+        "node_count": len(frontier.get("nodes") or []),
+        "updated_at": str(updated_at or _now()),
+        "message": str(
+            message
+            or default_discovery_state_message(
+                status,
+                discovery=discovery,
+                frontier=frontier,
+            )
+        ).strip(),
+    }
+    if error:
+        payload["error"] = str(error).strip()
+    return payload
+
+
+def load_discovery_state(
+    session: Path,
+    *,
+    discovery: dict | None = None,
+    frontier: dict | None = None,
+) -> dict:
+    discovery_data = discovery or load_discovery(session)
+    frontier_state = frontier or load_frontier_state(session)
+    source = str(discovery_data.get("source") or "").strip().lower()
+    if source and source not in {"pending", "unknown"}:
+        return build_discovery_state_payload(
+            discovery=discovery_data,
+            frontier=frontier_state,
+            status="ready",
+            mode="live",
+            requested_live_discovery=True,
+        )
+    session_state = load_session_state(session)
+    explicit = session_state.get(DISCOVERY_STATE_SESSION_KEY)
+    if isinstance(explicit, dict):
+        status = str(explicit.get("status") or "").strip().lower()
+        if status not in {"seed_only", "pending", "ready", "failed"}:
+            status = ""
+        mode = str(explicit.get("mode") or "").strip().lower()
+        if mode not in {"live", "deferred"}:
+            mode = "live" if status in {"pending", "ready", "failed"} else "deferred"
+        if status:
+            return build_discovery_state_payload(
+                discovery=discovery_data,
+                frontier=frontier_state,
+                status=status,
+                mode=mode,
+                requested_live_discovery=bool(
+                    explicit.get("requested_live_discovery", mode == "live")
+                ),
+                message=str(explicit.get("message") or "").strip() or None,
+                error=str(explicit.get("error") or "").strip() or None,
+                updated_at=str(explicit.get("updated_at") or _now()),
+            )
+    return build_discovery_state_payload(
+        discovery=discovery_data,
+        frontier=frontier_state,
+        status="seed_only",
+        mode="deferred",
+        requested_live_discovery=False,
+    )
+
+
+def write_discovery_state(
+    session: Path,
+    *,
+    discovery: dict | None = None,
+    frontier: dict | None = None,
+    status: str,
+    mode: str,
+    requested_live_discovery: bool,
+    message: str | None = None,
+    error: str | None = None,
+    updated_at: str | None = None,
+) -> dict:
+    discovery_data = discovery or load_discovery(session)
+    frontier_state = frontier or load_frontier_state(session)
+    payload = build_discovery_state_payload(
+        discovery=discovery_data,
+        frontier=frontier_state,
+        status=status,
+        mode=mode,
+        requested_live_discovery=requested_live_discovery,
+        message=message,
+        error=error,
+        updated_at=updated_at,
+    )
+    state = load_session_state(session)
+    state[DISCOVERY_STATE_SESSION_KEY] = payload
+    write_session_state(session, state)
+    return payload
 
 
 def readiness_warning_fingerprint(readiness: dict) -> str:

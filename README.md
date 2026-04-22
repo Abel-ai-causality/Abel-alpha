@@ -65,6 +65,16 @@ the order of information:
 5. `debug-branch` runs semantic preflight
 6. `run-branch` records evidence only after the branch is semantically valid
 
+When `init-session --discover` is slow, treat that as a discovery phase, not as
+proof that nothing happened. The command and generated session artifacts should
+now make the state explicit:
+
+- `pending`: live discovery was requested and is not recorded yet
+- `ready`: live discovery is recorded and the frontier is graph-backed
+- `seed_only`: live discovery has not been run for this session yet
+- `failed`: the last live discovery attempt failed and the session stayed
+  seed-only
+
 ## What `prepare-branch` Produces
 
 `prepare-branch` now writes a concrete branch contract under `inputs/`:

@@ -28,6 +28,16 @@ After live discovery, the session owns:
 - `frontier.json`: expandable graph-node universe plus probe memory
 - `readiness.json`: advisory coverage report
 
+The session also owns explicit discovery state through `session_state.json`.
+
+Treat that state as operational truth for first use:
+
+- `seed_only`: no live discovery has been recorded yet
+- `pending`: a live discovery request was made but results are not recorded yet
+- `ready`: live discovery is recorded and the frontier is graph-backed
+- `failed`: the last live discovery attempt failed; the session stayed
+  seed-only until retry
+
 The branch then selects from that session context in `branch.yaml`.
 
 ## Practical Search Order
