@@ -14,8 +14,9 @@ For the current branch-first operating flow, read `experiment-loop.md` and
 Abel gives ~10 justified parents vs ~10,000 blind scan. Same signal at Sharpe 1.8:
 causal DSR=97%, blind DSR=41%. Follows from Pearl + DSR formula.
 
-**A2. Look-ahead = invalid backtest.**
-Future data in features = backtest is lying. See `references/constraints.md` for the structural strategy rules.
+**A2. Temporal illegality = invalid backtest.**
+If the strategy reads information it could not have seen at decision time, the
+backtest is lying. See `references/constraints.md` for the runtime contract.
 
 ## Constraints (empirical — questionable with evidence)
 
@@ -37,3 +38,23 @@ Use Abel-discovered causal structure as the default search prior because it redu
 
 **C5. Fallback is continuity mode, not equal discovery evidence.**
 If Abel is unavailable, heuristic discovery can keep the research loop moving and may still produce tradeable strategies. But the discovery prior is weaker: K is higher in spirit, confidence should be downgraded, and outcomes are not directly comparable to Abel-led causal discovery claims.
+
+## Runtime Consequence
+
+In the current branch workflow, the right burden split is:
+
+- `Abel-alpha` makes the branch world explicit
+- `causal-edge` owns temporal/runtime legality
+- the strategy owns mechanism design inside that visible world
+
+That is why the branch-default path is now:
+
+- inspect prepared inputs
+- write `compute_decisions(self, ctx)`
+- use semantic preflight before a recorded run
+
+not:
+
+- hand-assemble raw frames
+- cargo-cult a fixed list of shift rules
+- trust the backtest because the code "looks lagged"

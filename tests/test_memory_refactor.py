@@ -112,15 +112,68 @@ def test_run_branch_round_updates_memory_and_status(
     for branch in (causal, baseline):
         deps_path = ni.dependencies_path(branch)
         deps_path.parent.mkdir(parents=True, exist_ok=True)
-        deps_path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "branch_id": branch.name,
-                    "target": "TSLA",
-                    "selected_drivers": ["AAPL"],
-                    "requested_start": "2020-01-01",
-                }
+        dependencies = {
+            "version": 1,
+            "branch_id": branch.name,
+            "target": "TSLA",
+            "selected_drivers": ["AAPL"],
+            "requested_start": "2020-01-01",
+            "cache": {
+                "adapter": "abel",
+                "timeframe": "1d",
+                "profile": "daily",
+                "results": [
+                    {
+                        "symbol": "TSLA",
+                        "ok": True,
+                        "row_count": 120,
+                        "available_range": {"start": "2020-01-01", "end": "2020-12-31"},
+                    },
+                    {
+                        "symbol": "AAPL",
+                        "ok": True,
+                        "row_count": 120,
+                        "available_range": {"start": "2020-01-01", "end": "2020-12-31"},
+                    },
+                ],
+            },
+        }
+        deps_path.write_text(json.dumps(dependencies), encoding="utf-8")
+        runtime_profile = ni.build_runtime_profile_payload(target="TSLA")
+        execution_constraints = ni.build_execution_constraints_payload(ni.load_branch_spec(branch))
+        data_manifest = ni.build_data_manifest_payload(
+            target="TSLA",
+            selected_drivers=["AAPL"],
+            cache_payload=dependencies["cache"],
+            readiness={},
+        )
+        probe_samples = ni.build_probe_samples_payload(
+            target="TSLA",
+            requested_start="2020-01-01",
+            data_manifest=data_manifest,
+        )
+        ni.runtime_profile_path(branch).write_text(
+            json.dumps(runtime_profile),
+            encoding="utf-8",
+        )
+        ni.execution_constraints_path(branch).write_text(
+            json.dumps(execution_constraints),
+            encoding="utf-8",
+        )
+        ni.data_manifest_path(branch).write_text(
+            json.dumps(data_manifest),
+            encoding="utf-8",
+        )
+        ni.probe_samples_path(branch).write_text(
+            json.dumps(probe_samples),
+            encoding="utf-8",
+        )
+        ni.context_guide_path(branch).write_text(
+            ni.build_context_guide_markdown(
+                target="TSLA",
+                runtime_profile=runtime_profile,
+                execution_constraints=execution_constraints,
+                data_manifest=data_manifest,
             ),
             encoding="utf-8",
         )

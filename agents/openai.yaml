@@ -3,7 +3,10 @@ interface:
   short_description: "Bootstrap-first, reuse-first causal workspace research skill."
   default_prompt: >
     Use $abel-alpha to establish or continue the default Abel workspace for
-    the current launch root. On first use, prefer the thin
+    the current launch root. First detect whether the launch root itself
+    already contains `alpha.workspace.yaml`; only fall back to the default
+    child `abel-alpha-workspace` when the current directory is not already the
+    workspace root. On first use, prefer the thin
     `scripts/bootstrap_workspace.py --path ...` entrypoint through `python3`
     so system Python is enough to establish the workspace; after the workspace
     exists, continue from inside it with the Abel-alpha CLI, and when

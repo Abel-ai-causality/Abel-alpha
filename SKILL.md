@@ -1,6 +1,6 @@
 ---
 name: abel-alpha
-version: 3.3.1
+version: 3.4.0
 description: >
   Use when: the user wants to start or continue an Abel-alpha research workflow
   for an asset, detect or create the default workspace for the current launch
@@ -17,57 +17,48 @@ metadata:
     homepage: https://github.com/Abel-ai-causality/Abel-alpha
 ---
 
-Use `Abel-alpha` as a workspace-first research skill.
-The CLI commands are the tools this skill uses to get the user into the right
-workspace and continue research there.
+Use `Abel-alpha` as the workspace-first orchestration skill for branch research.
 
-The point of this skill is not to make the workflow feel elaborate.
-The point is to make exploration less blind.
+The point is not to memorize commands. The point is to make the strategy world
+explicit before the agent writes code.
 
-Abel's causal graph is the opening prior, not the final answer.
-Use it to narrow the search space, surface more plausible mechanisms, and make
-each round compound on a smaller, more defensible set of ideas.
+Abel's causal graph is the opening prior, not the final answer. Use it to cut
+down blind search, define narrower branch theses, and compound from the latest
+credible branch instead of restarting from scratch.
 
-Alpha owns the research workspace layout. When you are inside an Abel-alpha
-workspace, keep the work on the session/branch path under `research/`. If you
-need a standalone `causal-edge init` project, create it outside the
-Abel-alpha workspace instead of mixing the two modes.
-
-There are two layers of environment:
-
-In practice, this skill should help the agent:
-
-- start causal-first instead of scanning a huge undirected space
-- turn discovery into a small explicit branch definition, not a giant candidate dump
-- preserve compounding inside a persistent workspace instead of restarting from scratch
-- use the CLI as tooling in service of exploration quality, not as the end goal
+Alpha owns the research workspace layout. Inside an Abel-alpha workspace, keep
+the work on the session/branch path under `research/`. If you need a standalone
+`causal-edge init` project, create it outside the workspace instead of mixing
+the two modes.
 
 Keep the mental model simple:
 
 - one working area
 - one default workspace: `abel-alpha-workspace`
 - one canonical runtime: `<workspace>/.venv`
-- repeated use should reuse the existing workspace before creating another one
-- system Python matters only long enough to establish the workspace once
+- one active research path under `research/`
+- one default branch contract centered on prepared inputs plus `DecisionContext`
 
-Do not improvise:
-
-- workspace location
-- workspace name
-- runtime layout
-- auth order
+Do not improvise workspace location, workspace name, runtime layout, or auth
+order.
 
 When an agent is launched, treat the launch working directory as the anchor for
 workspace behavior.
 
+Do not determine workspace existence by checking only whether
+`<launch-root>/abel-alpha-workspace` exists. The working area itself may
+already be the workspace root.
+
 Use this workspace resolution order:
 
-1. if the current directory is already an Abel-alpha workspace, continue there
-2. else if `<launch-root>/abel-alpha-workspace` exists, reuse it
+1. if `<launch-root>/alpha.workspace.yaml` exists, continue in `<launch-root>`
+2. else if `<launch-root>/abel-alpha-workspace/alpha.workspace.yaml` exists, reuse that child workspace
 3. else create `<launch-root>/abel-alpha-workspace`
 
-Always pass an explicit `--path` when creating a workspace.
-Do not invent a new workspace name unless the user asked for one explicitly.
+Always pass an explicit `--path` when creating a workspace. Do not invent a
+new workspace name unless the user asked for one explicitly.
+Never bootstrap a new workspace inside a directory that already contains
+`alpha.workspace.yaml`.
 
 Use this auth order:
 
@@ -76,12 +67,9 @@ Use this auth order:
 3. only if reusable auth is unavailable, complete a new login
 
 When `doctor` or the next required exploration step reports `auth_missing`,
-treat that as the next workflow transition, not as background troubleshooting.
-If no reusable auth was found, immediately start the explicit auth handoff from
-the workspace runtime and only pause once the authorization URL is ready for
-the user.
-
-Think about the workflow in two phases, not one long command list.
+treat that as the next workflow transition. If no reusable auth was found,
+start the explicit auth handoff from the workspace runtime and surface the URL
+as soon as it exists.
 
 On first contact with a new working area, the job is simply to establish the
 workspace. If the default workspace does not exist yet, start there with system
@@ -89,15 +77,18 @@ Python and let Abel-alpha provision the real runtime inside the workspace:
 
 ```bash
 LAUNCH_ROOT="$PWD"
-WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
-python3 /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+if [ -f "$LAUNCH_ROOT/alpha.workspace.yaml" ]; then
+  WORKSPACE_PATH="$LAUNCH_ROOT"
+elif [ -f "$LAUNCH_ROOT/abel-alpha-workspace/alpha.workspace.yaml" ]; then
+  WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+else
+  WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+  python3 /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+fi
 ```
 
-That is the setup moment, not the day-to-day loop.
-
-Once the workspace exists, shift your attention into that directory and treat
-its `abel-alpha` CLI and `.venv` as the normal place to continue research. The
-ongoing flow should feel like continuation, not repeated setup:
+That is the setup moment, not the day-to-day loop. Once the workspace exists,
+work from inside it:
 
 ```bash
 cd "$WORKSPACE_PATH"
@@ -110,37 +101,56 @@ abel-alpha debug-branch --branch research/<ticker>/<exp-id>/branches/<branch-id>
 abel-alpha run-branch --branch research/<ticker>/<exp-id>/branches/<branch-id> -d "baseline"
 ```
 
-That path is a useful orientation, not a rigid script. The important boundary
-is that `branch.yaml` makes the branch inputs explicit, `prepare-branch`
-resolves them before a recorded round, and the generated `engine.py` is only a
-starter path check until the branch-specific mechanism exists.
+That path is orientation, not ritual. The important information order is:
+
+1. `branch.yaml` states the branch intent.
+2. `prepare-branch` writes the branch runtime contract under `inputs/`.
+3. `engine.py` is authored against `DecisionContext`, not raw loaders.
+4. `debug-branch` runs semantic preflight before a recorded round.
+5. `run-branch` records evidence only after the branch is semantically valid.
+
+`prepare-branch` now writes the concrete authoring contract:
+
+- `inputs/runtime_profile.json`
+- `inputs/execution_constraints.json`
+- `inputs/data_manifest.json`
+- `inputs/context_guide.md`
+- `inputs/probe_samples.json`
+- `inputs/dependencies.json`
+
+Those files are not bookkeeping. They are the visible runtime world the agent
+should inspect before writing or revising strategy code.
+
+Treat the generated `engine.py` as a runnable starter, not a finished thesis.
+The default authoring surface is:
+
+- `compute_decisions(self, ctx)`
+- `ctx.target.series("close")`
+- `ctx.feed(name).native_series(...)`
+- `ctx.feed(name).asof_series(...)`
+- `ctx.points()`
+- `ctx.decisions(next_position)`
+
+Do not teach yourself that legality means "remember to add `.shift(1)`". The
+legality contract is runtime-owned:
+
+- only read market data through `DecisionContext`
+- only emit next-position intent through `ctx.decisions(...)`
+- let semantic preflight tell you when visibility or timing assumptions are wrong
 
 If you re-enter from the parent launch directory instead of the workspace root,
 reuse that same child workspace before creating anything new.
+If `alpha.workspace.yaml` is already present in the current directory, that
+directory is the workspace root and you should not create a nested child.
 
-If `abel-alpha doctor` reports `auth_missing`, immediately run the workspace
-runtime's explicit handoff command, surface the URL as soon as it appears, and
-resume the branch flow after authorization succeeds.
-
-Treat the generated `engine.py` as a runnable starter path check. It is there
-to make the first branch path real and debuggable; once that path is proven,
-swap it for the branch-specific thesis instead of treating the starter engine
-as a finished idea.
-
-If the packaged CLI is already available before first use, `abel-alpha
-workspace bootstrap --path "$WORKSPACE_PATH"` is an equivalent setup path. It
-is not the main story. The main story is: establish the workspace once, then
-work from inside it.
-
-When you reuse an existing workspace, say so explicitly.
-When auth is needed and an authorization URL appears, tell the user
-immediately. Do not silently wait in the terminal without surfacing the URL.
+When you reuse an existing workspace, say so explicitly. When auth is needed
+and an authorization URL appears, tell the user immediately.
 
 Read references as needed:
 
 - workflow and ownership: `references/experiment-loop.md`
 - branch authoring and research judgment: `references/branch-authoring.md`
 - discovery guidance: `references/discovery-protocol.md`
-- structural safety rules: `references/constraints.md`
+- runtime legality and safety: `references/constraints.md`
 - mechanism inspiration after a branch is runnable: `references/proven-patterns.md`
 - first-principles rationale: `references/methodology.md`
