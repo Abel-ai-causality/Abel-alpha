@@ -2510,6 +2510,7 @@ def run_branch_round(args: argparse.Namespace) -> int:
                 f"output_shape={((semantic.get('output_shape') or {}).get('label', 'unknown'))}",
             ],
         )
+        render_section("Prepared Inputs", semantic_prepared_input_lines(semantic))
     frame_key, frame_text = classify_result_frame(result)
     render_section(
         "Interpretation",
@@ -2608,6 +2609,7 @@ def debug_branch_run(args: argparse.Namespace) -> int:
                         f"output_shape={((semantic.get('output_shape') or {}).get('label', 'unknown'))}",
                     ],
                 )
+                render_section("Prepared Inputs", semantic_prepared_input_lines(semantic))
             frame_key, frame_text = classify_result_frame(debug_result)
             render_section(
                 "Interpretation",
@@ -4237,6 +4239,25 @@ def render_section(title: str, lines: list[str]) -> None:
     print(f"{title}:")
     for line in lines:
         print(f"  {line}")
+
+
+def semantic_prepared_input_lines(semantic: dict) -> list[str]:
+    prepared = (semantic or {}).get("prepared_inputs") or {}
+    if not isinstance(prepared, dict) or not prepared:
+        return []
+    lines = [
+        f"traced_inputs={', '.join(prepared.get('traced_inputs') or []) or 'none'}",
+    ]
+    effective_window = prepared.get("effective_window") or {}
+    if effective_window:
+        lines.append(
+            "prepared_effective_window="
+            f"{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}"
+        )
+    issues = [str(item.get("kind") or "") for item in (prepared.get("issues") or []) if str(item.get("kind") or "").strip()]
+    if issues:
+        lines.append(f"prepared_issues={', '.join(issues)}")
+    return lines
 
 
 def classify_result_frame(result: dict[str, object]) -> tuple[str, str]:
