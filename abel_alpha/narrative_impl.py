@@ -394,6 +394,35 @@ def main() -> int:
         help="Maximum Abel nodes to record from the expansion call",
     )
 
+    probe_nodes = sub.add_parser(
+        "probe-nodes",
+        help="Probe discovered graph nodes before branch authoring",
+    )
+    probe_nodes.add_argument("--session", required=True)
+    probe_nodes.add_argument(
+        "--node",
+        dest="nodes",
+        action="append",
+        required=True,
+        help="Graph node id to probe (repeatable)",
+    )
+    probe_nodes.add_argument(
+        "--start",
+        default=None,
+        help="Optional start date override for the probe window",
+    )
+    probe_nodes.add_argument(
+        "--end",
+        default=None,
+        help="Optional end date override for the probe window",
+    )
+    probe_nodes.add_argument(
+        "--limit",
+        type=int,
+        default=500,
+        help="Rows requested per asset probe",
+    )
+
     set_backtest_start = sub.add_parser(
         "set-backtest-start",
         help="Update the session-level backtest start and refresh readiness",
@@ -635,6 +664,14 @@ def main() -> int:
         return expand_frontier_command(
             session=resolve_workspace_arg_path(args.session),
             from_node=args.from_node,
+            limit=args.limit,
+        )
+    if args.command == "probe-nodes":
+        return probe_nodes_command(
+            session=resolve_workspace_arg_path(args.session),
+            node_ids=list(args.nodes or []),
+            start=args.start,
+            end=args.end,
             limit=args.limit,
         )
     if args.command == "set-hypothesis":
@@ -1253,6 +1290,7 @@ def frontier_candidate_nodes(frontier_state: dict, *, include_target: bool = Fal
     ordered = sorted(
         [item for item in (frontier_state.get("nodes") or []) if isinstance(item, dict)],
         key=lambda item: (
+            _frontier_availability_rank((item.get("availability_summary") or {}).get("status")),
             int(item.get("depth", 999) or 999),
             item.get("asset") != frontier_state.get("target_asset"),
             _frontier_role_rank(item.get("discovery_roles") or []),
@@ -1311,6 +1349,18 @@ def _frontier_role_rank(values: list[str] | tuple[str, ...]) -> int:
     if not values:
         return 99
     return min(rank.get(str(value).strip(), 99) for value in values)
+
+
+def _frontier_availability_rank(status: str | None) -> int:
+    rank = {
+        "full_target_overlap": 0,
+        "partial_target_overlap": 1,
+        "target_unavailable": 2,
+        "no_target_overlap": 3,
+        "no_data": 4,
+        "error": 5,
+    }
+    return rank.get(str(status or "").strip(), 2)
 
 
 def record_frontier_expansion(
@@ -1418,6 +1468,104 @@ def expand_frontier_command(*, session: Path, from_node: str, limit: int) -> int
     return 0
 
 
+def probe_nodes_command(
+    *,
+    session: Path,
+    node_ids: list[str],
+    start: str | None,
+    end: str | None,
+    limit: int,
+) -> int:
+    frontier = load_frontier_state(session)
+    discovery = load_discovery(session)
+    requested_refs = coerce_graph_node_refs(node_ids)
+    if not requested_refs:
+        raise RuntimeError("At least one valid graph node id is required.")
+    missing = [
+        ref.node_id
+        for ref in requested_refs
+        if find_frontier_entry(frontier, ref.node_id) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "probe-nodes only accepts nodes already discovered in the session frontier. "
+            f"Missing: {', '.join(missing)}"
+        )
+    target_node = str(frontier.get("target_node") or branch_target_node({}, discovery)).strip()
+    requested_start = start or _get_backtest_start(discovery)
+    report = run_edge_probe_data(
+        session=session,
+        node_ids=[ref.node_id for ref in requested_refs],
+        target_node=target_node,
+        start=requested_start,
+        end=end,
+        limit=limit,
+    )
+    summary_items = []
+    for item in report.get("results") or []:
+        entry = find_frontier_entry(frontier, str(item.get("node_id") or ""))
+        if entry is None:
+            continue
+        native_window = item.get("native_window") or {}
+        entry["availability_summary"] = {
+            "status": item.get("status"),
+            "rows": int(item.get("row_count", 0) or 0),
+            "start": native_window.get("start"),
+            "end": native_window.get("end"),
+            "target_overlap_days": int(item.get("target_overlap_days", 0) or 0),
+            "target_decision_days": int(item.get("target_decision_days", 0) or 0),
+            "first_usable_target_time": item.get("first_usable_target_time"),
+        }
+        summary_items.append(
+            f"{item.get('node_id')}: {item.get('status')} "
+            f"({item.get('target_overlap_days', 0)}/{item.get('target_decision_days', 0)} target days)"
+        )
+    frontier.setdefault("probe_history", []).append(
+        {
+            "probed_at": _now(),
+            "target_node": target_node,
+            "node_ids": [ref.node_id for ref in requested_refs],
+            "requested_window": report.get("requested_window") or {},
+            "basket": report.get("basket") or {},
+        }
+    )
+    frontier["updated_at"] = _now()
+    with SessionLock(session):
+        write_frontier_state(session, frontier)
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "frontier_probed",
+                "branch_id": "",
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"Probed {len(requested_refs)} frontier node(s): "
+                    f"{', '.join(ref.node_id for ref in requested_refs)}"
+                ),
+                "artifact_path": FRONTIER_STATE_FILENAME,
+            },
+        )
+        render_session(session)
+    print(f"Probed frontier nodes for {session}")
+    print(f"  target_node: {target_node}")
+    for item in summary_items:
+        print(f"  {item}")
+    basket = report.get("basket") or {}
+    if basket:
+        print(f"  dense_overlap_start: {basket.get('dense_overlap_start') or 'n/a'}")
+        limiting = ", ".join(basket.get("limiting_inputs") or []) or "none"
+        print(f"  limiting_inputs: {limiting}")
+    print("")
+    print("From here:")
+    print(f"  abel-alpha frontier-status --session {session}")
+    return 0
+
+
 def _dedupe_strings(values) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
@@ -1514,6 +1662,62 @@ def run_edge_verify_data(
         raise RuntimeError(
             "Abel-edge verify-data did not produce a readiness report. "
             "Upgrade the workspace runtime before depending on discovery readiness."
+        )
+    try:
+        return json.loads(output_path.read_text(encoding="utf-8"))
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def run_edge_probe_data(
+    *,
+    session: Path,
+    node_ids: list[str],
+    target_node: str,
+    start: str | None,
+    end: str | None,
+    limit: int,
+) -> dict:
+    python_bin = resolve_default_python_bin(session)
+    workspace_root = find_workspace_root(session)
+    runtime_env = (
+        build_workspace_runtime_env(workspace_root)
+        if workspace_root is not None
+        else None
+    )
+    fd, temp_name = tempfile.mkstemp(suffix="-probe-data.json")
+    os.close(fd)
+    output_path = Path(temp_name)
+    output_path.unlink(missing_ok=True)
+    command = [
+        python_bin,
+        "-m",
+        "causal_edge.cli",
+        "probe-data",
+        "--target-node",
+        target_node,
+        "--limit",
+        str(limit),
+        "--output-json",
+        str(output_path),
+    ]
+    if start:
+        command.extend(["--start", start])
+    if end:
+        command.extend(["--end", end])
+    for node_id in node_ids:
+        command.extend(["--node-id", node_id])
+    completed = subprocess.run(
+        command,
+        cwd=session,
+        capture_output=True,
+        text=True,
+        env=runtime_env,
+    )
+    if not output_path.exists():
+        raise RuntimeError(
+            "Abel-edge probe-data did not produce a probe report. "
+            f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
         )
     try:
         return json.loads(output_path.read_text(encoding="utf-8"))
@@ -4276,10 +4480,17 @@ def render_frontier_markdown(frontier: dict) -> str:
     for item in nodes[:10]:
         roles = ", ".join(item.get("discovery_roles") or []) or "unknown"
         discovered_from = ", ".join(item.get("discovered_from") or []) or "seed"
+        availability = item.get("availability_summary") or {}
+        availability_text = ""
+        if availability:
+            availability_text = (
+                f", probe `{availability.get('status', 'unknown')}` "
+                f"{availability.get('target_overlap_days', 0)}/{availability.get('target_decision_days', 0)} target days"
+            )
         lines.append(
             "1. "
             f"`{item.get('node_id', 'unknown')}` depth `{item.get('depth', '?')}` "
-            f"roles `{roles}` from `{discovered_from}`"
+            f"roles `{roles}` from `{discovered_from}`{availability_text}"
         )
     return "\n".join(lines)
 
@@ -4300,7 +4511,9 @@ def session_next_step(
             return (
                 f"Inspect the graph frontier with "
                 f"`abel-alpha frontier-status --session {session}`, "
-                f"expand promising nodes with "
+                f"probe promising nodes with "
+                f"`abel-alpha probe-nodes --session {session} --node <node_id>`, "
+                f"expand outward with "
                 f"`abel-alpha expand-frontier --session {session} --from-node <node_id>`, "
                 f"and use nearby candidates like `{preview}` before you narrow into a branch thesis."
             )

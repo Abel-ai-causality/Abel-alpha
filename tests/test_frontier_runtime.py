@@ -108,3 +108,50 @@ def test_render_session_includes_graph_frontier_section(tmp_path: Path) -> None:
     readme = (session / "README.md").read_text(encoding="utf-8")
     assert "## Graph Frontier" in readme
     assert "TSLA.volume" in readme
+
+
+def test_probe_nodes_command_updates_frontier_availability(tmp_path: Path, monkeypatch) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v4", tmp_path / "research")
+    ni.write_discovery(session, _seed_discovery())
+    ni.write_frontier_state(session, ni.frontier_state_from_discovery(_seed_discovery()))
+
+    monkeypatch.setattr(
+        ni,
+        "run_edge_probe_data",
+        lambda **kwargs: {
+            "target": {"node_id": "TSLA.price"},
+            "requested_window": {"start": "2020-01-01", "end": None},
+            "basket": {"dense_overlap_start": "2020-01-03T00:00:00+00:00", "limiting_inputs": ["BTCUSD.price"]},
+            "results": [
+                {
+                    "node_id": "BTCUSD.price",
+                    "status": "partial_target_overlap",
+                    "row_count": 3,
+                    "native_window": {
+                        "start": "2020-01-03T00:00:00+00:00",
+                        "end": "2020-01-05T00:00:00+00:00",
+                    },
+                    "target_overlap_days": 2,
+                    "target_decision_days": 3,
+                    "first_usable_target_time": "2020-01-03T00:00:00+00:00",
+                }
+            ],
+        },
+    )
+
+    result = ni.probe_nodes_command(
+        session=session,
+        node_ids=["BTCUSD.price"],
+        start=None,
+        end=None,
+        limit=500,
+    )
+
+    frontier = ni.load_frontier_state(session)
+    btc_entry = ni.find_frontier_entry(frontier, "BTCUSD.price")
+
+    assert result == 0
+    assert frontier["probe_history"][-1]["node_ids"] == ["BTCUSD.price"]
+    assert btc_entry is not None
+    assert btc_entry["availability_summary"]["status"] == "partial_target_overlap"
+    assert btc_entry["availability_summary"]["target_overlap_days"] == 2
