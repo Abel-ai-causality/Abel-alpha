@@ -1,5 +1,13 @@
 # Discovery Protocol
 
+This document assumes the workspace root has already been identified correctly:
+
+- if `./alpha.workspace.yaml` exists, the current directory is already the workspace root
+- else if `./abel-alpha-workspace/alpha.workspace.yaml` exists, reuse that child workspace
+- only if neither manifest exists should you bootstrap a new workspace
+
+Do not infer "missing workspace" by checking only for `./abel-alpha-workspace/`.
+
 ## Purpose
 
 Discovery answers one question only:

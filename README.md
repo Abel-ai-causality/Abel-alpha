@@ -23,6 +23,17 @@ guessing what data world it is in.
 - one default branch contract centered on prepared runtime inputs plus
   `DecisionContext`
 
+Before creating anything, identify whether the current directory is already the
+workspace:
+
+- if `./alpha.workspace.yaml` exists, this directory is already the workspace root
+- else if `./abel-alpha-workspace/alpha.workspace.yaml` exists, reuse that child workspace
+- only if neither manifest exists should you bootstrap a new `abel-alpha-workspace`
+
+Do not decide workspace existence by checking only whether
+`./abel-alpha-workspace/` exists. A working area can itself already be the
+workspace root.
+
 If you need a standalone `causal-edge init` project, create it outside the
 Abel-alpha workspace. The branch workflow and the standalone framework scaffold
 serve different purposes.
@@ -89,6 +100,8 @@ new login when reuse is unavailable.
 
 If you re-enter from the parent launch directory instead of the workspace root,
 Abel-alpha should reuse the same child workspace before creating anything new.
+If `alpha.workspace.yaml` is already in the current directory, continue there
+directly and do not create a nested child workspace.
 
 ## References
 

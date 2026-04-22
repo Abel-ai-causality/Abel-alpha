@@ -1,5 +1,17 @@
 # Experiment Loop
 
+## Workspace Preflight
+
+Before following the loop below, determine where the workspace root actually
+is:
+
+- if `./alpha.workspace.yaml` exists, the current directory is already the workspace root
+- else if `./abel-alpha-workspace/alpha.workspace.yaml` exists, reuse that child workspace
+- only if neither manifest exists should you bootstrap a new workspace
+
+Do not decide that "the workspace does not exist" by checking only whether
+`./abel-alpha-workspace/` is present.
+
 ## Standard Path
 
 ```bash

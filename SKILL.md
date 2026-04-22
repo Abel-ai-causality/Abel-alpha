@@ -45,14 +45,20 @@ order.
 When an agent is launched, treat the launch working directory as the anchor for
 workspace behavior.
 
+Do not determine workspace existence by checking only whether
+`<launch-root>/abel-alpha-workspace` exists. The working area itself may
+already be the workspace root.
+
 Use this workspace resolution order:
 
-1. if the current directory is already an Abel-alpha workspace, continue there
-2. else if `<launch-root>/abel-alpha-workspace` exists, reuse it
+1. if `<launch-root>/alpha.workspace.yaml` exists, continue in `<launch-root>`
+2. else if `<launch-root>/abel-alpha-workspace/alpha.workspace.yaml` exists, reuse that child workspace
 3. else create `<launch-root>/abel-alpha-workspace`
 
 Always pass an explicit `--path` when creating a workspace. Do not invent a
 new workspace name unless the user asked for one explicitly.
+Never bootstrap a new workspace inside a directory that already contains
+`alpha.workspace.yaml`.
 
 Use this auth order:
 
@@ -71,8 +77,14 @@ Python and let Abel-alpha provision the real runtime inside the workspace:
 
 ```bash
 LAUNCH_ROOT="$PWD"
-WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
-python3 /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+if [ -f "$LAUNCH_ROOT/alpha.workspace.yaml" ]; then
+  WORKSPACE_PATH="$LAUNCH_ROOT"
+elif [ -f "$LAUNCH_ROOT/abel-alpha-workspace/alpha.workspace.yaml" ]; then
+  WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+else
+  WORKSPACE_PATH="$LAUNCH_ROOT/abel-alpha-workspace"
+  python3 /path/to/Abel-alpha/scripts/bootstrap_workspace.py --path "$WORKSPACE_PATH"
+fi
 ```
 
 That is the setup moment, not the day-to-day loop. Once the workspace exists,
@@ -128,6 +140,8 @@ legality contract is runtime-owned:
 
 If you re-enter from the parent launch directory instead of the workspace root,
 reuse that same child workspace before creating anything new.
+If `alpha.workspace.yaml` is already present in the current directory, that
+directory is the workspace root and you should not create a nested child.
 
 When you reuse an existing workspace, say so explicitly. When auth is needed
 and an authorization URL appears, tell the user immediately.

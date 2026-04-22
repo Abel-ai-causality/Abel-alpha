@@ -32,6 +32,33 @@ def default_workspace_path(start: Path | None = None) -> Path:
     return current / DEFAULT_WORKSPACE_NAME
 
 
+def find_containing_workspace_root(path: Path) -> Path | None:
+    """Return the existing workspace root containing ``path`` when it is nested inside one."""
+    current = path.expanduser().resolve()
+    search_from = current if current.exists() else current.parent
+    candidate = find_workspace_root(search_from)
+    if candidate is None or candidate == current:
+        return None
+    return candidate
+
+
+def inspect_workspace_bootstrap_target(path: Path) -> tuple[str, Path | None]:
+    """Classify whether ``path`` is safe to use as a bootstrap target."""
+    current = path.expanduser().resolve()
+    if is_workspace_root(current):
+        return "existing_workspace_root", current
+
+    containing_root = find_containing_workspace_root(current)
+    if containing_root is not None:
+        return "nested_workspace", containing_root
+
+    child = default_workspace_path(current)
+    if child != current and is_workspace_root(child):
+        return "launch_root_child_workspace", child
+
+    return "clear", None
+
+
 def resolve_workspace_entry(start: Path | None = None) -> tuple[Path | None, str]:
     """Resolve workspace re-entry from a workspace root, descendant, or launch root."""
     current = (start or Path.cwd()).expanduser().resolve()
@@ -109,6 +136,13 @@ def scaffold_workspace(
 ) -> Path:
     """Create a new Abel-alpha workspace directory with the standard layout."""
     root = (target_root or Path.cwd() / name).resolve()
+    containing_root = find_containing_workspace_root(root)
+    if containing_root is not None:
+        raise RuntimeError(
+            "Refusing to create a nested Abel-alpha workspace at "
+            f"'{root}' because '{containing_root}' is already the workspace root "
+            "for this working area."
+        )
     if root.exists():
         if not root.is_dir():
             raise FileExistsError(
@@ -213,6 +247,8 @@ This is an Abel-alpha research workspace.
 
 Treat this directory as the canonical workspace for this working area.
 Treat this workspace's `.venv` as the canonical runtime for daily research.
+If `alpha.workspace.yaml` already exists here, this directory is already the
+workspace root. Do not bootstrap `./abel-alpha-workspace` inside it.
 
 The CLI commands below are the tools Abel-alpha uses to continue research
 inside this workspace. The point is not to memorize a checklist. The point is
@@ -240,6 +276,7 @@ Use that path as orientation, not as a rigid script. The important boundary is:
 
 ## Re-entry
 
+- if `alpha.workspace.yaml` exists in the current directory, continue here and do not create `./abel-alpha-workspace`
 - if you open this workspace root again later, continue here
 - if you open the parent launch directory later, reuse its child `abel-alpha-workspace` before creating another one
 - do not create a second workspace in the same area unless you want one intentionally
@@ -293,6 +330,9 @@ abel-alpha workspace status
 abel-alpha doctor
 ```
 
+If `alpha.workspace.yaml` is already present in this directory, this directory
+is the workspace root. Do not create `./abel-alpha-workspace` inside it.
+
 ### Start a new exploration session
 ```bash
 abel-alpha doctor
@@ -332,6 +372,7 @@ abel-alpha promote-branch --branch research/tsla/tsla-v1/branches/graph-v1
 - `cache/market_data/` is the edge-owned shared cache root
 
 ### Re-enter this workspace later
+- if `alpha.workspace.yaml` is in the current directory, continue here directly and do not bootstrap a child workspace
 - if you are already in this workspace root, continue here directly
 - if you are in the parent launch directory, reuse its `abel-alpha-workspace` child before creating another one
 """

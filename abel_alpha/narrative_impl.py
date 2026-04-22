@@ -33,6 +33,7 @@ from abel_alpha.workspace import (
     build_default_manifest,
     default_workspace_path,
     default_activate_command,
+    inspect_workspace_bootstrap_target,
     is_workspace_root,
     find_workspace_root,
     load_workspace_manifest,
@@ -689,6 +690,26 @@ def main() -> int:
 def handle_workspace_command(args: argparse.Namespace) -> int:
     if args.workspace_command == "init":
         target_root = Path(args.path).expanduser()
+        target_state, related_root = inspect_workspace_bootstrap_target(target_root)
+        if target_state == "nested_workspace" and related_root is not None:
+            print(
+                "Refusing to create a nested Abel-alpha workspace at "
+                f"{target_root.resolve()}"
+            )
+            print(f"Existing workspace root for this area: {related_root}")
+            print("")
+            print("Continue there instead:")
+            print(f"  abel-alpha workspace status --path {related_root}")
+            print(f"  abel-alpha doctor --path {related_root}")
+            return 1
+        if target_state == "launch_root_child_workspace" and related_root is not None:
+            print(f"Workspace already exists at the default child path: {related_root}")
+            print("Reuse it instead of creating another workspace for the same area.")
+            print("")
+            print("Continue there instead:")
+            print(f"  abel-alpha workspace status --path {related_root}")
+            print(f"  abel-alpha doctor --path {related_root}")
+            return 1
         root = scaffold_workspace(args.name, target_root=target_root)
         manifest = build_default_manifest(args.name)
         resolved = resolve_workspace_paths(root, manifest)
@@ -713,6 +734,26 @@ def handle_workspace_command(args: argparse.Namespace) -> int:
         return 0
     if args.workspace_command == "bootstrap":
         target_root = Path(args.path).expanduser().resolve()
+        target_state, related_root = inspect_workspace_bootstrap_target(target_root)
+        if target_state == "nested_workspace" and related_root is not None:
+            print(
+                "Refusing to bootstrap a nested Abel-alpha workspace at "
+                f"{target_root}"
+            )
+            print(f"Existing workspace root for this area: {related_root}")
+            print("")
+            print("Continue there instead:")
+            print(f"  abel-alpha workspace status --path {related_root}")
+            print(f"  abel-alpha doctor --path {related_root}")
+            return 1
+        if target_state == "launch_root_child_workspace" and related_root is not None:
+            print(f"Workspace already exists at the default child path: {related_root}")
+            print("Reuse it instead of bootstrapping another workspace for the same area.")
+            print("")
+            print("Continue there instead:")
+            print(f"  abel-alpha workspace status --path {related_root}")
+            print(f"  abel-alpha doctor --path {related_root}")
+            return 1
         reused_workspace = False
         if target_root.exists():
             if not is_workspace_root(target_root):
