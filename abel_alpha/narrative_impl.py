@@ -66,6 +66,7 @@ EVENTS_HEADER = [
 
 DEFAULT_BACKTEST_START = "2020-01-01"
 SESSION_STATE_FILENAME = "session_state.json"
+FRONTIER_STATE_FILENAME = "frontier.json"
 BRANCH_STATE_FILENAME = "branch_state.json"
 READINESS_FILENAME = "readiness.json"
 BRANCH_SPEC_FILENAME = "branch.yaml"
@@ -369,6 +370,30 @@ def main() -> int:
         help="Maximum Abel nodes to record per discovery call",
     )
 
+    frontier_status = sub.add_parser(
+        "frontier-status",
+        help="Show the current graph frontier for a session",
+    )
+    frontier_status.add_argument("--session", required=True)
+    frontier_status.add_argument(
+        "--node",
+        default=None,
+        help="Optional graph node id to inspect in detail",
+    )
+
+    expand_frontier = sub.add_parser(
+        "expand-frontier",
+        help="Expand the session frontier from one discovered graph node",
+    )
+    expand_frontier.add_argument("--session", required=True)
+    expand_frontier.add_argument("--from-node", required=True)
+    expand_frontier.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum Abel nodes to record from the expansion call",
+    )
+
     set_backtest_start = sub.add_parser(
         "set-backtest-start",
         help="Update the session-level backtest start and refresh readiness",
@@ -549,6 +574,7 @@ def main() -> int:
         print(f"Created Abel-alpha session at {session}")
         print(f"  ticker: {discovery.get('ticker', args.ticker.upper())}")
         print(f"  discovery: {session / 'discovery.json'}")
+        print(f"  frontier: {session / FRONTIER_STATE_FILENAME}")
         print(f"  events: {session / 'events.tsv'}")
         if readiness:
             print(f"  readiness: {session / READINESS_FILENAME}")
@@ -569,6 +595,7 @@ def main() -> int:
             print("  discovery_source: pending (live discovery not run)")
         print("")
         print("From here:")
+        print(f"  abel-alpha frontier-status --session {session}")
         print(f"  abel-alpha init-branch --session {session} --branch-id graph-v1")
         return 0
     if args.command == "set-backtest-start":
@@ -599,6 +626,17 @@ def main() -> int:
         print("From here:")
         print(f"  abel-alpha status --session {session}")
         return 0
+    if args.command == "frontier-status":
+        return print_frontier_status(
+            session=resolve_workspace_arg_path(args.session),
+            node_id=args.node,
+        )
+    if args.command == "expand-frontier":
+        return expand_frontier_command(
+            session=resolve_workspace_arg_path(args.session),
+            from_node=args.from_node,
+            limit=args.limit,
+        )
     if args.command == "set-hypothesis":
         branch = resolve_workspace_arg_path(args.branch).resolve()
         session = branch.parent.parent
@@ -665,7 +703,7 @@ def main() -> int:
         )
         print("")
         print("What matters now:")
-        print("  branch.yaml is where target, start, drivers, and overlap become explicit.")
+        print("  branch.yaml is where target, inputs, start, and overlap become explicit.")
         print("  The generated engine is only a starter path check; it helps you verify the branch wiring before you encode a branch-specific mechanism.")
         print("  If you fetch bars, keep `limit=...` explicit and avoid blanket `dropna()` before confirming the target column survives.")
         print("")
@@ -963,19 +1001,10 @@ def init_session_dir(
         if discovery_data is not None:
             write_discovery(session, discovery_data)
         elif not discovery_path.exists():
-            write_discovery(
-                session,
-                {
-                    "ticker": ticker.upper(),
-                    "source": "pending",
-                    "parents": [],
-                    "blanket_new": [],
-                    "children": [],
-                    "K_discovery": 0,
-                    "backtest": {"start": backtest_start},
-                    "created_at": _now(),
-                },
-            )
+            write_discovery(session, build_pending_discovery_payload(ticker, backtest_start=backtest_start))
+        if discovery_data is not None or not frontier_state_path(session).exists():
+            frontier_state = frontier_state_from_discovery(load_discovery(session))
+            write_frontier_state(session, frontier_state)
         if readiness_report is not None:
             write_readiness(session, readiness_report)
         append_tsv_row(
@@ -1011,30 +1040,45 @@ def init_session_dir(
                     "artifact_path": str(discovery_path.relative_to(session)),
                 },
             )
-            if readiness_report:
-                append_tsv_row(
-                    session / "events.tsv",
-                    EVENTS_HEADER,
-                    {
-                        "timestamp": _now(),
-                        "event": "data_readiness_recorded",
-                        "branch_id": "",
-                        "round_id": "",
-                        "mode": "",
-                        "verdict": "",
-                        "decision": "",
-                        "description": (
-                            "Recorded driver data readiness: "
-                            f"{format_data_readiness_summary(readiness_report)}"
-                        ),
-                        "artifact_path": READINESS_FILENAME,
-                    },
-                )
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "frontier_seeded",
+                "branch_id": "",
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": "Seeded graph frontier from the current discovery snapshot",
+                "artifact_path": FRONTIER_STATE_FILENAME,
+            },
+        )
+        if readiness_report:
+            append_tsv_row(
+                session / "events.tsv",
+                EVENTS_HEADER,
+                {
+                    "timestamp": _now(),
+                    "event": "data_readiness_recorded",
+                    "branch_id": "",
+                    "round_id": "",
+                    "mode": "",
+                    "verdict": "",
+                    "decision": "",
+                    "description": (
+                        "Recorded driver data readiness: "
+                        f"{format_data_readiness_summary(readiness_report)}"
+                    ),
+                    "artifact_path": READINESS_FILENAME,
+                },
+            )
         render_session(session)
     return session
 
 
-def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
+def fetch_live_graph_payload(node_id: str, *, limit: int) -> dict:
     try:
         from causal_edge.plugins.abel.credentials import (
             MissingAbelApiKeyError,
@@ -1058,18 +1102,332 @@ def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
     except MissingAbelApiKeyError as exc:
         python_bin = resolve_default_python_bin(workspace_root or Path.cwd())
         raise RuntimeError(
-            "init-session --discover is blocked on Abel auth. "
+            "Graph discovery is blocked on Abel auth. "
             "No reusable auth was found, so start explicit auth handoff now with:\n"
             f"{build_auth_handoff_command(python_bin)}\n\n"
             "Surface the URL immediately when it appears, complete authorization, "
-            "then retry `abel-alpha init-session --ticker "
-            f"{ticker.upper()} --exp-id <exp-id> --discover`."
+            "then retry the discovery command."
         ) from exc
 
-    payload = discover_graph_payload(ticker.upper(), mode="all", limit=limit)
+    payload = discover_graph_payload(node_id, mode="all", limit=limit)
+    payload.setdefault("created_at", _now())
+    return payload
+
+
+def fetch_live_discovery(ticker: str, *, limit: int) -> dict:
+    payload = fetch_live_graph_payload(ticker.upper(), limit=limit)
     payload["backtest"] = {"start": DEFAULT_BACKTEST_START}
     payload.setdefault("created_at", _now())
     return payload
+
+
+def build_pending_discovery_payload(ticker: str, *, backtest_start: str) -> dict:
+    target_asset = str(ticker or "").strip().upper()
+    return {
+        "ticker": target_asset,
+        "target_asset": target_asset,
+        "target_node": f"{target_asset}.price" if target_asset else "",
+        "source": "pending",
+        "parents": [],
+        "blanket_new": [],
+        "children": [],
+        "K_discovery": 0,
+        "backtest": {"start": backtest_start},
+        "created_at": _now(),
+    }
+
+
+def frontier_state_path(session: Path) -> Path:
+    return session / FRONTIER_STATE_FILENAME
+
+
+def load_frontier_state(session: Path) -> dict:
+    path = frontier_state_path(session)
+    if not path.exists():
+        return frontier_state_from_discovery(load_discovery(session))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return frontier_state_from_discovery(load_discovery(session))
+    return normalize_frontier_state(payload)
+
+
+def write_frontier_state(session: Path, payload: dict) -> None:
+    frontier_state_path(session).write_text(
+        json.dumps(normalize_frontier_state(payload), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def normalize_frontier_state(payload: dict) -> dict:
+    target_asset = str(payload.get("target_asset") or "").strip().upper()
+    target_node = branch_target_node({"target_asset": target_asset, "target_node": payload.get("target_node")})
+    frontier = {
+        "version": int(payload.get("version", 1) or 1),
+        "target_asset": target_asset or target_node.split(".")[0],
+        "target_node": target_node,
+        "nodes": [],
+        "expansions": [],
+        "probe_history": list(payload.get("probe_history") or []),
+        "updated_at": str(payload.get("updated_at") or _now()),
+    }
+    for item in payload.get("nodes") or []:
+        ref = coerce_graph_node_refs([item])
+        if not ref:
+            continue
+        _merge_frontier_node(
+            frontier,
+            ref[0],
+            discovered_from=item.get("discovered_from") or [],
+            depth=int(item.get("depth", 1) or 1),
+            availability_summary=item.get("availability_summary"),
+        )
+    frontier["expansions"] = [item for item in (payload.get("expansions") or []) if isinstance(item, dict)]
+    return frontier
+
+
+def frontier_state_from_discovery(discovery: dict) -> dict:
+    target_asset = str(discovery.get("target_asset") or discovery.get("ticker") or "").strip().upper()
+    target_node = branch_target_node({"target_asset": target_asset}, discovery)
+    frontier = {
+        "version": 1,
+        "target_asset": target_asset,
+        "target_node": target_node,
+        "nodes": [],
+        "expansions": [],
+        "probe_history": [],
+        "updated_at": str(discovery.get("created_at") or _now()),
+    }
+    target_refs = coerce_graph_node_refs([target_node], extra_roles=["target"])
+    if target_refs:
+        _merge_frontier_node(frontier, target_refs[0], discovered_from=[], depth=0)
+    for ref in discovery_candidate_nodes(discovery):
+        _merge_frontier_node(
+            frontier,
+            ref,
+            discovered_from=[target_node] if target_node else [],
+            depth=1,
+        )
+    return frontier
+
+
+def _merge_frontier_node(
+    frontier: dict,
+    ref: GraphNodeRef,
+    *,
+    discovered_from: list[str] | tuple[str, ...],
+    depth: int,
+    availability_summary: dict | None = None,
+) -> bool:
+    nodes = frontier.setdefault("nodes", [])
+    node_id = ref.node_id
+    roles = _dedupe_strings(ref.roles)
+    from_nodes = _dedupe_strings(discovered_from)
+    for entry in nodes:
+        if str(entry.get("node_id") or "").strip() != node_id:
+            continue
+        entry["asset"] = ref.asset
+        entry["field"] = ref.field
+        entry["discovery_roles"] = _dedupe_strings((entry.get("discovery_roles") or []) + roles)
+        entry["discovered_from"] = _dedupe_strings((entry.get("discovered_from") or []) + from_nodes)
+        entry["depth"] = min(int(entry.get("depth", depth) or depth), int(depth))
+        if availability_summary:
+            entry["availability_summary"] = availability_summary
+        return False
+    entry = {
+        "node_id": node_id,
+        "asset": ref.asset,
+        "field": ref.field,
+        "discovery_roles": roles,
+        "discovered_from": from_nodes,
+        "depth": int(depth),
+    }
+    if availability_summary:
+        entry["availability_summary"] = availability_summary
+    nodes.append(entry)
+    frontier["updated_at"] = _now()
+    return True
+
+
+def frontier_candidate_nodes(frontier_state: dict, *, include_target: bool = False) -> list[GraphNodeRef]:
+    target_node = str(frontier_state.get("target_node") or "").strip()
+    ordered = sorted(
+        [item for item in (frontier_state.get("nodes") or []) if isinstance(item, dict)],
+        key=lambda item: (
+            int(item.get("depth", 999) or 999),
+            item.get("asset") != frontier_state.get("target_asset"),
+            _frontier_role_rank(item.get("discovery_roles") or []),
+            str(item.get("node_id") or ""),
+        ),
+    )
+    refs: list[GraphNodeRef] = []
+    for item in ordered:
+        ref = coerce_graph_node_refs(
+            [item],
+            extra_roles=item.get("discovery_roles") or [],
+        )
+        if not ref:
+            continue
+        if not include_target and ref[0].node_id == target_node:
+            continue
+        refs.append(ref[0])
+    return refs
+
+
+def find_frontier_entry(frontier_state: dict, node_id: str) -> dict | None:
+    refs = coerce_graph_node_refs([node_id])
+    if not refs:
+        return None
+    normalized = refs[0].node_id
+    for item in frontier_state.get("nodes") or []:
+        if str(item.get("node_id") or "").strip() == normalized:
+            return item
+    return None
+
+
+def frontier_summary_lines(frontier_state: dict, *, limit: int = 8) -> list[str]:
+    nodes = frontier_candidate_nodes(frontier_state, include_target=True)
+    total_nodes = len(frontier_state.get("nodes") or [])
+    expansions = len(frontier_state.get("expansions") or [])
+    lines = [
+        f"target_node={frontier_state.get('target_node', 'unknown')}",
+        f"node_count={total_nodes}",
+        f"expansion_count={expansions}",
+    ]
+    visible = []
+    for ref in nodes[:limit]:
+        entry = find_frontier_entry(frontier_state, ref.node_id) or {}
+        depth = int(entry.get("depth", 0) or 0)
+        visible.append(f"{ref.node_id} [depth={depth}]")
+    lines.append(f"visible_nodes={', '.join(visible) or 'none recorded'}")
+    return lines
+
+
+def suggest_frontier_inputs(frontier_state: dict, *, limit: int = 5) -> list[GraphNodeRef]:
+    return frontier_candidate_nodes(frontier_state)[:limit]
+
+
+def _frontier_role_rank(values: list[str] | tuple[str, ...]) -> int:
+    rank = {"target": 0, "sibling": 1, "parent": 2, "blanket": 3, "neighbor": 4, "child": 5}
+    if not values:
+        return 99
+    return min(rank.get(str(value).strip(), 99) for value in values)
+
+
+def record_frontier_expansion(
+    frontier_state: dict,
+    *,
+    from_node: str,
+    expansion_payload: dict,
+    added_nodes: list[str],
+) -> dict:
+    frontier_state.setdefault("expansions", []).append(
+        {
+            "expanded_at": _now(),
+            "from_node": from_node,
+            "limit": int(expansion_payload.get("K_discovery", 0) or len(added_nodes)),
+            "added_nodes": added_nodes,
+            "returned_count": len(discovery_candidate_nodes(expansion_payload)),
+        }
+    )
+    frontier_state["updated_at"] = _now()
+    return frontier_state
+
+
+def print_frontier_status(*, session: Path, node_id: str | None = None) -> int:
+    frontier = load_frontier_state(session)
+    print(f"Session frontier: {session}")
+    for line in frontier_summary_lines(frontier):
+        key, _, value = line.partition("=")
+        print(f"  {key}: {value}")
+    if node_id:
+        entry = find_frontier_entry(frontier, node_id)
+        if entry is None:
+            raise RuntimeError(f"Node `{node_id}` is not currently in the session frontier.")
+        print("")
+        print("Node detail:")
+        print(f"  node_id: {entry.get('node_id', '')}")
+        print(f"  asset: {entry.get('asset', '')}")
+        print(f"  field: {entry.get('field', '')}")
+        print(f"  depth: {entry.get('depth', '')}")
+        print(f"  roles: {', '.join(entry.get('discovery_roles') or []) or 'unknown'}")
+        print(f"  discovered_from: {', '.join(entry.get('discovered_from') or []) or 'seed'}")
+        availability = entry.get("availability_summary") or {}
+        if availability:
+            print(f"  availability_status: {availability.get('status', 'unknown')}")
+            print(f"  native_window: {availability.get('start', 'n/a')} -> {availability.get('end', 'n/a')}")
+            print(f"  target_overlap_days: {availability.get('target_overlap_days', 0)}")
+    return 0
+
+
+def expand_frontier_command(*, session: Path, from_node: str, limit: int) -> int:
+    frontier = load_frontier_state(session)
+    entry = find_frontier_entry(frontier, from_node)
+    if entry is None:
+        raise RuntimeError(
+            f"Node `{from_node}` is not in the current frontier. "
+            "Use `abel-alpha frontier-status --session ...` to inspect available nodes."
+        )
+    payload = fetch_live_graph_payload(str(entry.get("node_id") or from_node), limit=limit)
+    new_refs = discovery_candidate_nodes(payload)
+    added_nodes: list[str] = []
+    next_depth = int(entry.get("depth", 0) or 0) + 1
+    for ref in new_refs:
+        added = _merge_frontier_node(
+            frontier,
+            ref,
+            discovered_from=[str(entry.get("node_id") or from_node)],
+            depth=next_depth,
+        )
+        if added:
+            added_nodes.append(ref.node_id)
+    record_frontier_expansion(
+        frontier,
+        from_node=str(entry.get("node_id") or from_node),
+        expansion_payload=payload,
+        added_nodes=added_nodes,
+    )
+    with SessionLock(session):
+        write_frontier_state(session, frontier)
+        append_tsv_row(
+            session / "events.tsv",
+            EVENTS_HEADER,
+            {
+                "timestamp": _now(),
+                "event": "frontier_expanded",
+                "branch_id": "",
+                "round_id": "",
+                "mode": "",
+                "verdict": "",
+                "decision": "",
+                "description": (
+                    f"Expanded frontier from {entry.get('node_id', from_node)}; "
+                    f"added {len(added_nodes)} node(s)"
+                ),
+                "artifact_path": FRONTIER_STATE_FILENAME,
+            },
+        )
+        render_session(session)
+    print(f"Expanded frontier from {entry.get('node_id', from_node)}")
+    print(f"  returned_nodes: {len(new_refs)}")
+    print(f"  added_nodes: {len(added_nodes)}")
+    if added_nodes:
+        print(f"  new_frontier_nodes: {', '.join(added_nodes[:8])}")
+    print("")
+    print("From here:")
+    print(f"  abel-alpha frontier-status --session {session}")
+    return 0
+
+
+def _dedupe_strings(values) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        ordered.append(text)
+        seen.add(text)
+    return ordered
 
 
 def write_discovery(session: Path, discovery_data: dict) -> None:
@@ -1167,6 +1525,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
     with SessionLock(session):
         discovery = load_discovery(session)
         readiness = load_readiness(session)
+        frontier_state = load_frontier_state(session)
         branch = session / "branches" / branch_id
         branch.mkdir(parents=True, exist_ok=True)
         (branch / "rounds").mkdir(parents=True, exist_ok=True)
@@ -1185,6 +1544,7 @@ def init_branch_dir(session: Path, branch_id: str) -> Path:
                     branch=branch,
                     discovery=discovery,
                     readiness=readiness,
+                    frontier_state=frontier_state,
                 ),
             )
         engine = branch / "engine.py"
@@ -1961,11 +2321,12 @@ def debug_branch_run(args: argparse.Namespace) -> int:
 def render_session(session: Path) -> None:
     discovery = load_discovery(session)
     readiness = load_readiness(session)
+    frontier = load_frontier_state(session)
     branches = load_branches(session)
     memory_snapshot = render_memory_snapshot(session, discovery, readiness, branches)
     for branch in branches:
         render_branch(branch, discovery, readiness, session.name, memory_snapshot)
-    session_readme = build_session_readme(session, discovery, readiness, branches)
+    session_readme = build_session_readme(session, discovery, readiness, frontier, branches)
     (session / "README.md").write_text(session_readme, encoding="utf-8")
 
 
@@ -1997,6 +2358,7 @@ def render_branch(
 def print_status(session: Path) -> None:
     discovery = load_discovery(session)
     readiness = load_readiness(session)
+    frontier = load_frontier_state(session)
     branches = load_branches(session)
     memory_branches = read_tsv_rows(session / MEMORY_BRANCHES_FILENAME)
     insights = read_tsv_rows(session / MEMORY_INSIGHTS_FILENAME)
@@ -2015,8 +2377,14 @@ def print_status(session: Path) -> None:
         warning = build_readiness_warning(readiness)
         if warning:
             print(f"Readiness warning: {warning}")
-        for line in readiness_recommendation_lines(readiness):
-            print(f"Coverage hint: {line}")
+    print(
+        "Frontier: "
+        f"{len(frontier.get('nodes') or [])} nodes, "
+        f"{len(frontier.get('expansions') or [])} expansions, "
+        f"target {frontier.get('target_node', 'unknown')}"
+    )
+    for line in readiness_recommendation_lines(readiness):
+        print(f"Coverage hint: {line}")
     leader = select_leader(branches)
     if leader and leader["rows"]:
         latest = leader["rows"][-1]
@@ -2231,6 +2599,7 @@ def build_session_readme(
     session: Path,
     discovery: dict,
     readiness: dict,
+    frontier: dict,
     branches: list[dict],
 ) -> str:
     keep_branches = [
@@ -2355,6 +2724,10 @@ Explore {discovery.get("ticker", session.parent.name.upper())} in session `{sess
 
 {render_discovery_readiness_section(readiness)}
 
+## Graph Frontier
+
+{render_frontier_markdown(frontier)}
+
 ## Selection Narrative
 
 This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_branches)} keep, {len(discard_branches)} discard, {len(branches) - len(keep_branches) - len(discard_branches)} pending.
@@ -2375,7 +2748,7 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 
 ## Next Step
 
-{session_next_step(session, branches, discovery, readiness)}
+{session_next_step(session, branches, discovery, readiness, frontier=frontier)}
 """
 
 
@@ -3882,13 +4255,55 @@ def build_branch_snapshot_line(branch: dict) -> str:
     )
 
 
+def render_frontier_markdown(frontier: dict) -> str:
+    nodes = sorted(
+        [item for item in (frontier.get("nodes") or []) if isinstance(item, dict)],
+        key=lambda item: (
+            int(item.get("depth", 999) or 999),
+            item.get("asset") != frontier.get("target_asset"),
+            _frontier_role_rank(item.get("discovery_roles") or []),
+            str(item.get("node_id") or ""),
+        ),
+    )
+    if not nodes:
+        return "1. `No frontier nodes recorded yet.`"
+    lines = [
+        f"- target_node: `{frontier.get('target_node', 'unknown')}`",
+        f"- node_count: `{len(nodes)}`",
+        f"- expansion_count: `{len(frontier.get('expansions') or [])}`",
+        "",
+    ]
+    for item in nodes[:10]:
+        roles = ", ".join(item.get("discovery_roles") or []) or "unknown"
+        discovered_from = ", ".join(item.get("discovered_from") or []) or "seed"
+        lines.append(
+            "1. "
+            f"`{item.get('node_id', 'unknown')}` depth `{item.get('depth', '?')}` "
+            f"roles `{roles}` from `{discovered_from}`"
+        )
+    return "\n".join(lines)
+
+
 def session_next_step(
     session: Path,
     branches: list[dict],
     discovery: dict,
     readiness: dict,
+    *,
+    frontier: dict | None = None,
 ) -> str:
+    frontier_state = frontier or load_frontier_state(session)
     if not branches:
+        frontier_nodes = frontier_candidate_nodes(frontier_state)
+        if frontier_nodes:
+            preview = ", ".join(ref.node_id for ref in frontier_nodes[:3])
+            return (
+                f"Inspect the graph frontier with "
+                f"`abel-alpha frontier-status --session {session}`, "
+                f"expand promising nodes with "
+                f"`abel-alpha expand-frontier --session {session} --from-node <node_id>`, "
+                f"and use nearby candidates like `{preview}` before you narrow into a branch thesis."
+            )
         return (
             f"Create the first branch with "
             f"`abel-alpha init-branch --session {session} --branch-id graph-v1`, "
@@ -4005,13 +4420,10 @@ def load_branches(session: Path) -> list[dict]:
 def load_discovery(session: Path) -> dict:
     path = session / "discovery.json"
     if not path.exists():
-        return {
-            "ticker": session.parent.name.upper(),
-            "source": "unknown",
-            "parents": [],
-            "blanket_new": [],
-            "K_discovery": 0,
-        }
+        return build_pending_discovery_payload(
+            session.parent.name.upper(),
+            backtest_start=DEFAULT_BACKTEST_START,
+        )
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -4136,18 +4548,39 @@ def discovery_candidate_nodes(discovery: dict) -> list[GraphNodeRef]:
     return ordered
 
 
-def suggest_branch_inputs(discovery: dict, readiness: dict, *, limit: int = 5) -> list[GraphNodeRef]:
-    discovered = discovery_candidate_nodes(discovery)
+def suggest_branch_inputs(
+    discovery: dict,
+    readiness: dict,
+    *,
+    frontier_state: dict | None = None,
+    limit: int = 5,
+) -> list[GraphNodeRef]:
+    discovered = (
+        suggest_frontier_inputs(frontier_state, limit=limit * 3)
+        if frontier_state
+        else discovery_candidate_nodes(discovery)
+    )
     usable = set(readiness_usable_tickers(readiness))
     prioritized = [item for item in discovered if item.asset in usable]
     fallback = [item for item in discovered if item.asset not in usable]
     return (prioritized + fallback)[:limit]
 
 
-def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict) -> dict:
+def build_default_branch_spec(
+    *,
+    branch: Path,
+    discovery: dict,
+    readiness: dict,
+    frontier_state: dict | None = None,
+) -> dict:
     target_asset = str(discovery.get("ticker") or branch.parent.parent.parent.name).strip().upper()
     target_node = branch_target_node({"target_asset": target_asset}, discovery)
-    suggested = suggest_branch_inputs(discovery, readiness, limit=5)
+    suggested = suggest_branch_inputs(
+        discovery,
+        readiness,
+        frontier_state=frontier_state,
+        limit=5,
+    )
     selected = suggested[: min(3, len(suggested))]
     return {
         "version": 2,
