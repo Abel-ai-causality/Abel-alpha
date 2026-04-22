@@ -206,6 +206,7 @@ def test_run_branch_round_updates_memory_and_status(
             ),
             encoding="utf-8",
         )
+        ni.persist_prepared_branch_contract(branch, ni.load_discovery(session))
 
     def fake_subprocess_run(command, cwd=None, capture_output=None, text=None, env=None, check=False, input=None):
         if "evaluate" in command:

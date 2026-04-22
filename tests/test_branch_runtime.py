@@ -41,7 +41,11 @@ def _sample_readiness() -> dict:
                 "usable": True,
                 "covers_requested_start": False,
             },
-        ]
+        ],
+        "coverage_hints": {
+            "target_safe_start": "2020-01-01",
+            "dense_overlap_hint_start": "2020-03-01",
+        },
     }
 
 
@@ -201,6 +205,7 @@ def _write_runtime_files(branch: Path) -> None:
         "# TSLA Branch Context Guide\n\n- use `ctx.target.series(\"close\")`\n",
         encoding="utf-8",
     )
+    ni.persist_prepared_branch_contract(branch, ni.load_discovery(branch.parent.parent))
 
 
 def test_prepare_branch_inputs_writes_runtime_contract_artifacts(tmp_path, monkeypatch) -> None:
@@ -282,10 +287,12 @@ def test_prepare_branch_inputs_writes_runtime_contract_artifacts(tmp_path, monke
     assert data_manifest["feeds"][1]["runtime_field"] == "volume"
     assert data_manifest["feeds"][1]["alignment_mode"] == "asof_to_target_decision"
     assert window_report["effective_window"]["start"] == "2020-03-01T00:00:00+00:00"
+    assert window_report["start_alignment"]["avoidable_gap_days"] == 60
     assert probe_samples["target_asset"] == "TSLA"
     assert len(probe_samples["sample_decision_dates"]) >= 2
     assert "DecisionContext" in context_guide
     assert "window_availability.json" in context_guide
+    assert "avoidable_gap_days" in context_guide
     assert 'ctx.feed("TSLA.volume").asof_series("volume")' in context_guide
 
 
@@ -319,3 +326,79 @@ def test_build_branch_context_prefers_prepared_runtime_inputs(tmp_path) -> None:
     assert context["_feeds"]["TSLA.volume"]["symbol"] == "TSLA"
     assert context["_feeds"]["TSLA.volume"]["default_field"] == "volume"
     assert context["data_manifest"]["selected_inputs"][1]["node_id"] == "MSFT.price"
+
+
+def test_debug_branch_run_blocks_on_stale_prepared_contract(tmp_path, capsys) -> None:
+    session = ni.init_session_dir("TSLA", "tsla-v3-debug", tmp_path / "research")
+    discovery = _sample_discovery()
+    readiness = _sample_readiness()
+    ni.write_discovery(session, discovery)
+    ni.write_readiness(session, readiness)
+    branch = ni.init_branch_dir(session, "graph-v1")
+
+    spec = ni.load_branch_spec(branch)
+    spec["target_asset"] = "TSLA"
+    spec["target_node"] = "TSLA.price"
+    spec["requested_start"] = "2020-01-01"
+    spec["selected_inputs"] = _sample_selected_inputs()
+    ni.write_branch_spec(branch, spec)
+    _write_runtime_files(branch)
+
+    spec["requested_start"] = "2020-02-01"
+    ni.write_branch_spec(branch, spec)
+
+    result = ni.debug_branch_run(
+        Namespace(
+            branch=str(branch),
+            python_bin=sys.executable,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert "Prepared branch inputs are stale" in captured.err
+    assert "changed_fields=requested_start" in captured.err
+
+
+def test_run_branch_round_blocks_on_stale_prepared_contract(tmp_path, capsys) -> None:
+    session = ni.init_session_dir("TSLA", "tsla-v3-run", tmp_path / "research")
+    discovery = _sample_discovery()
+    readiness = _sample_readiness()
+    ni.write_discovery(session, discovery)
+    ni.write_readiness(session, readiness)
+    branch = ni.init_branch_dir(session, "graph-v1")
+
+    spec = ni.load_branch_spec(branch)
+    spec["target_asset"] = "TSLA"
+    spec["target_node"] = "TSLA.price"
+    spec["requested_start"] = "2020-01-01"
+    spec["selected_inputs"] = _sample_selected_inputs()
+    ni.write_branch_spec(branch, spec)
+    _write_runtime_files(branch)
+
+    spec["selected_inputs"] = [{"node_id": "AAPL.price", "asset": "AAPL", "field": "price"}]
+    ni.write_branch_spec(branch, spec)
+
+    result = ni.run_branch_round(
+        Namespace(
+            branch=str(branch),
+            mode="explore",
+            description="stale contract check",
+            input_note="",
+            hypothesis="stale contract should block run",
+            expected_signal="",
+            trigger="contract drift",
+            change_summary="manual selected input change",
+            time_spent_min="1",
+            summary="",
+            next_step="",
+            action=[],
+            python_bin=None,
+            allow_untouched_template=True,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert "Prepared branch inputs are stale" in captured.err
+    assert "changed_fields=selected_inputs" in captured.err

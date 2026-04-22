@@ -361,9 +361,72 @@ def test_probe_select_prepare_flow_supports_volume_and_crypto_inputs(tmp_path: P
 
     window_report = json.loads(ni.window_availability_path(branch).read_text(encoding="utf-8"))
     data_manifest = json.loads(ni.data_manifest_path(branch).read_text(encoding="utf-8"))
+    context_guide = ni.context_guide_path(branch).read_text(encoding="utf-8")
 
     assert result == 0
     assert window_report["effective_window"]["start"] == "2020-03-02T00:00:00+00:00"
+    assert window_report["start_alignment"]["target_safe_start"] == "2020-01-01T00:00:00+00:00"
+    assert window_report["start_alignment"]["avoidable_gap_days"] == 61
     assert "BTCUSD.price" in window_report["limiting_inputs"]
     assert any(feed["node_id"] == "TSLA.volume" for feed in data_manifest["feeds"])
     assert any(feed["node_id"] == "BTCUSD.price" for feed in data_manifest["feeds"])
+    assert "avoidable_gap_days" in context_guide
+
+
+def test_select_inputs_invalidates_prepared_contract(tmp_path: Path, monkeypatch) -> None:
+    session = ni.init_session_dir("TSLA", "frontier-v7", tmp_path / "research")
+    ni.write_discovery(session, _seed_discovery())
+    ni.write_frontier_state(session, ni.frontier_state_from_discovery(_seed_discovery()))
+    branch = ni.init_branch_dir(session, "graph-v1")
+
+    ni.select_branch_inputs_command(
+        branch=branch,
+        node_ids=["TSLA.volume"],
+        replace=True,
+    )
+
+    def fake_subprocess_run(command, cwd=None, capture_output=None, text=None, env=None):
+        output_path = Path(command[command.index("--output-json") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "adapter": "abel",
+                    "timeframe": "1d",
+                    "profile": "daily",
+                    "results": [
+                        {
+                            "symbol": "TSLA",
+                            "ok": True,
+                            "row_count": 220,
+                            "available_range": {"start": "2020-01-01", "end": "2020-12-31"},
+                        },
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ni.subprocess, "run", fake_subprocess_run)
+
+    result = ni.prepare_branch_inputs(
+        Namespace(
+            branch=str(branch),
+            python_bin="python3",
+            cache_limit=400,
+        )
+    )
+    status = ni.branch_prepare_status(branch, ni.load_discovery(session))
+    assert result == 0
+    assert status["status"] == "ready"
+
+    ni.select_branch_inputs_command(
+        branch=branch,
+        node_ids=["BTCUSD.price"],
+        replace=True,
+    )
+
+    status = ni.branch_prepare_status(branch, ni.load_discovery(session))
+    assert status["status"] == "stale"
+    assert "selected_inputs" in status["changed_fields"]

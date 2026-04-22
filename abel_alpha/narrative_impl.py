@@ -1740,6 +1740,7 @@ def select_branch_inputs_command(
     replace: bool,
 ) -> int:
     session = branch.parent.parent
+    discovery = load_discovery(session)
     frontier = load_frontier_state(session)
     requested_refs = coerce_graph_node_refs(node_ids)
     if not requested_refs:
@@ -1779,8 +1780,11 @@ def select_branch_inputs_command(
             },
         )
         render_session(session)
+    prepare_status = branch_prepare_status(branch, discovery)
     print(f"Updated branch inputs for {branch}")
     print(f"  selected_inputs: {', '.join(ref.node_id for ref in merged)}")
+    if not prepare_status.get("ready", False):
+        print(f"  prepare_status: {format_branch_prepare_status(prepare_status)}")
     print("")
     print("From here:")
     print(f"  abel-alpha prepare-branch --branch {branch}")
@@ -2221,6 +2225,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         data_manifest=data_manifest,
         overlap_mode=str(branch_spec.get("overlap_mode") or "target_only"),
         frontier_state=frontier_state,
+        readiness=readiness,
     )
     probe_samples = build_probe_samples_payload(
         target_asset=target_asset,
@@ -2259,6 +2264,7 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
+    persist_prepared_branch_contract(branch, discovery)
 
     with SessionLock(session):
         append_tsv_row(
@@ -2304,6 +2310,8 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
         "  effective_window: "
         f"{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}"
     )
+    for line in window_availability_advisory_lines(window_report):
+        print(f"  {line}")
     print(f"  cache_results: ok={len(warm_ok)} fail={len(warm_fail)}")
     for line in advisory_lines:
         print(f"  {line}")
@@ -2413,12 +2421,9 @@ def run_branch_round(args: argparse.Namespace) -> int:
     workspace_root = find_workspace_root(branch)
     discovery = load_discovery(session)
     readiness = load_readiness(session)
-    if not branch_inputs_ready(branch):
-        print(
-            "Branch inputs have not been prepared yet. "
-            "Run `abel-alpha prepare-branch --branch ...` before recording a round.",
-            file=sys.stderr,
-        )
+    prepare_status = branch_prepare_status(branch, discovery)
+    if not prepare_status.get("ready", False):
+        print_branch_prepare_required(branch, prepare_status, stream=sys.stderr)
         return 2
     backtest_start = branch_requested_start(branch, discovery)
     advisory_lines = branch_runtime_advisory_lines(
@@ -2482,6 +2487,8 @@ def run_branch_round(args: argparse.Namespace) -> int:
         with SessionLock(session):
             emit_readiness_warning = should_emit_readiness_warning(session, readiness)
     for line in advisory_lines:
+        print(f"Runtime context: {line}", file=sys.stderr)
+    for line in branch_window_runtime_lines(branch):
         print(f"Runtime context: {line}", file=sys.stderr)
     if warning and emit_readiness_warning:
         print(
@@ -2668,6 +2675,10 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     session = branch.parent.parent
     discovery = load_discovery(session)
     readiness = load_readiness(session)
+    prepare_status = branch_prepare_status(branch, discovery)
+    if not prepare_status.get("ready", False):
+        print_branch_prepare_required(branch, prepare_status, stream=sys.stderr)
+        return 2
     workspace_root = find_workspace_root(branch)
     backtest_start = branch_requested_start(branch, discovery)
     advisory_lines = branch_runtime_advisory_lines(
@@ -2733,6 +2744,8 @@ def debug_branch_run(args: argparse.Namespace) -> int:
     sys.stderr.write(completed.stderr)
     for line in advisory_lines:
         print(f"Runtime context: {line}")
+    for line in branch_window_runtime_lines(branch):
+        print(f"Runtime context: {line}")
     if debug_result_path.exists():
         try:
             debug_result = json.loads(debug_result_path.read_text(encoding="utf-8"))
@@ -2793,7 +2806,7 @@ def render_branch(
     )
 
     (branch_dir / "README.md").write_text(
-        build_branch_readme(branch, latest_note, exp_id), encoding="utf-8"
+        build_branch_readme(branch, latest_note, exp_id, discovery), encoding="utf-8"
     )
     (branch_dir / "memory.md").write_text(
         build_memory(branch, discovery, memory_snapshot), encoding="utf-8"
@@ -3214,7 +3227,12 @@ This session tracks {len(branches)} branch(es). Current outcomes: {len(keep_bran
 """
 
 
-def build_branch_readme(branch: dict, latest_note: dict[str, str], exp_id: str) -> str:
+def build_branch_readme(
+    branch: dict,
+    latest_note: dict[str, str],
+    exp_id: str,
+    discovery: dict,
+) -> str:
     rows = branch["rows"]
     latest = rows[-1] if rows else {}
     debug_note = latest_debug_snapshot(branch["branch_dir"])
@@ -3224,6 +3242,14 @@ def build_branch_readme(branch: dict, latest_note: dict[str, str], exp_id: str) 
     source_type = branch_source_type(branch["branch_dir"], {})
     method_family = branch_method_family(branch["branch_dir"])
     parent_branch_id = branch_parent_branch_id(branch["branch_dir"])
+    prepare_status = branch_prepare_status(branch["branch_dir"], discovery)
+    prepared_inputs_label = (
+        "inputs/ (current)"
+        if prepare_status.get("ready", False)
+        else "inputs/ (stale)"
+        if branch_inputs_ready(branch["branch_dir"])
+        else "not prepared"
+    )
     ledger = (
         "\n".join(
             f"1. `{row.get('round_id', '?')}` - {row.get('description', '?')} [{row.get('score', '?')}] {row.get('decision', '?')}"
@@ -3270,7 +3296,8 @@ See `branch.yaml` for the explicit branch inputs and `thesis.md` for the branch 
 - alpha_context_mode: `{diagnostics_note.get("context_mode", "not recorded")}`
 - alpha_context: `{diagnostics_note.get("context_path", "not recorded")}`
 - branch_spec: `{BRANCH_SPEC_FILENAME}`
-- prepared_inputs: `{"inputs/" if branch_inputs_ready(branch["branch_dir"]) else "not prepared"}`
+- prepared_inputs: `{prepared_inputs_label}`
+- prepare_status: `{format_branch_prepare_status(prepare_status)}`
 - runtime_profile: `{"inputs/" + RUNTIME_PROFILE_FILENAME if runtime_profile_path(branch["branch_dir"]).exists() else "not prepared"}`
 - execution_constraints: `{"inputs/" + EXECUTION_CONSTRAINTS_FILENAME if execution_constraints_path(branch["branch_dir"]).exists() else "not prepared"}`
 - data_manifest: `{"inputs/" + DATA_MANIFEST_FILENAME if data_manifest_path(branch["branch_dir"]).exists() else "not prepared"}`
@@ -4343,7 +4370,8 @@ def branch_context_summary_lines(
     inputs = _branch_input_list(branch_spec)
     inputs_text = ", ".join(inputs) if inputs else "none"
     starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
-    inputs_prepared = branch_inputs_ready(branch)
+    prepare_status = branch_prepare_status(branch, discovery)
+    inputs_prepared = prepare_status.get("ready", False)
     window_report = {}
     if window_availability_path(branch).exists():
         window_report = json.loads(window_availability_path(branch).read_text(encoding="utf-8"))
@@ -4366,20 +4394,33 @@ def branch_context_summary_lines(
     dense_overlap = coverage_hints.get("dense_overlap_hint_start")
     if dense_overlap:
         lines.append(f"dense_overlap_hint={dense_overlap}")
-    lines.append(f"inputs_prepared={'yes' if inputs_prepared else 'no'}")
+    if inputs_prepared:
+        lines.append("inputs_prepared=yes")
+    elif branch_inputs_ready(branch):
+        lines.append("inputs_prepared=stale")
+    else:
+        lines.append("inputs_prepared=no")
+    lines.append(f"prepare_status={format_branch_prepare_status(prepare_status)}")
     effective_window = (window_report or {}).get("effective_window") or {}
     if effective_window:
         lines.append(
             "effective_window="
             f"{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}"
         )
+        start_alignment = (window_report or {}).get("start_alignment") or {}
+        if start_alignment.get("avoidable_gap_days") is not None:
+            lines.append(
+                f"avoidable_gap_days={start_alignment.get('avoidable_gap_days')}"
+            )
         limiting = ", ".join((window_report or {}).get("limiting_inputs") or []) or "none"
         lines.append(f"limiting_inputs={limiting}")
     lines.append(
         "scaffold_status="
         + ("starter_scaffold" if starter_scaffold else "branch_specific_engine")
     )
-    if not inputs_prepared:
+    if prepare_status.get("status") == "stale":
+        lines.append("current_branch_boundary=refresh_prepared_inputs")
+    elif not inputs_prepared:
         lines.append("current_branch_boundary=prepare_branch_inputs")
     elif starter_scaffold:
         lines.append("recorded_round_boundary=branch_specific_engine_required")
@@ -4642,6 +4683,7 @@ def build_branch_context(
         data_manifest=data_manifest,
         overlap_mode=str(branch_spec.get("overlap_mode") or "target_only"),
         frontier_state=load_frontier_state(session),
+        readiness=readiness,
     )
     if window_availability_path(branch).exists():
         window_report = json.loads(window_availability_path(branch).read_text(encoding="utf-8"))
@@ -4872,6 +4914,14 @@ def session_next_step(
         return f"Continue improving `{keep[-1]['branch_id']}` or open a sibling branch from its latest KEEP baseline."
     if pending:
         branch = pending[-1]
+        prepare_status = branch_prepare_status(branch["branch_dir"], discovery)
+        if not prepare_status.get("ready", False):
+            return (
+                f"Refresh `{branch['branch_id']}` with "
+                f"`abel-alpha prepare-branch --branch {branch['branch_dir']}` because "
+                f"the prepared contract is `{format_branch_prepare_status(prepare_status)}`, "
+                f"then rerun `abel-alpha debug-branch --branch {branch['branch_dir']}`."
+            )
         debug_note = latest_debug_snapshot(branch["branch_dir"])
         if debug_note:
             return (
@@ -5016,6 +5066,12 @@ def branch_inputs_ready(branch: Path) -> bool:
     return all(path.exists() for path in required)
 
 
+def gap_days_between(start: pd.Timestamp | None, end: pd.Timestamp | None) -> int | None:
+    if start is None or end is None:
+        return None
+    return max(int((end - start).days), 0)
+
+
 def load_branch_spec(branch: Path) -> dict:
     path = branch_spec_path(branch)
     if not path.exists():
@@ -5029,6 +5085,134 @@ def write_branch_spec(branch: Path, payload: dict) -> None:
         yaml.safe_dump(payload, sort_keys=False, allow_unicode=False),
         encoding="utf-8",
     )
+
+
+def current_branch_prepare_contract(branch: Path, discovery: dict) -> dict[str, object]:
+    branch_spec = load_branch_spec(branch)
+    return {
+        "target_asset": branch_target_asset(branch_spec, discovery),
+        "target_node": branch_target_node(branch_spec, discovery),
+        "requested_start": branch_requested_start(branch, discovery),
+        "overlap_mode": str(branch_spec.get("overlap_mode") or "target_only"),
+        "selected_inputs": [
+            ref.to_payload() for ref in branch_selected_inputs(branch_spec)
+        ],
+        "data_requirements": branch_spec.get("data_requirements") or {"timeframe": "1d"},
+        "execution_constraints": build_execution_constraints_payload(branch_spec),
+    }
+
+
+def prepare_contract_changed_fields(
+    prepared_contract: dict,
+    current_contract: dict,
+) -> list[str]:
+    labels = (
+        "target_asset",
+        "target_node",
+        "requested_start",
+        "overlap_mode",
+        "selected_inputs",
+        "data_requirements",
+        "execution_constraints",
+    )
+    return [
+        label
+        for label in labels
+        if prepared_contract.get(label) != current_contract.get(label)
+    ]
+
+
+def persist_prepared_branch_contract(branch: Path, discovery: dict) -> None:
+    state = load_branch_state(branch)
+    state["prepared_contract"] = {
+        "prepared_at": _now(),
+        "payload": current_branch_prepare_contract(branch, discovery),
+    }
+    write_branch_state(branch, state)
+
+
+def branch_prepare_status(branch: Path, discovery: dict) -> dict[str, object]:
+    if not branch_inputs_ready(branch):
+        return {
+            "ready": False,
+            "status": "missing",
+            "reason": "prepared input artifacts are missing",
+            "changed_fields": [],
+        }
+    state = load_branch_state(branch)
+    prepared = state.get("prepared_contract")
+    if not isinstance(prepared, dict) or not isinstance(prepared.get("payload"), dict):
+        return {
+            "ready": False,
+            "status": "missing_contract",
+            "reason": "prepared contract tracking is missing; rerun prepare-branch once",
+            "changed_fields": [],
+        }
+    current_contract = current_branch_prepare_contract(branch, discovery)
+    changed_fields = prepare_contract_changed_fields(
+        prepared.get("payload") or {},
+        current_contract,
+    )
+    if changed_fields:
+        return {
+            "ready": False,
+            "status": "stale",
+            "reason": "branch contract changed after the last prepare",
+            "changed_fields": changed_fields,
+            "prepared_at": str(prepared.get("prepared_at") or "").strip(),
+        }
+    return {
+        "ready": True,
+        "status": "ready",
+        "reason": "prepared contract matches the current branch spec",
+        "changed_fields": [],
+        "prepared_at": str(prepared.get("prepared_at") or "").strip(),
+    }
+
+
+def format_branch_prepare_status(status: dict[str, object]) -> str:
+    label = str(status.get("status") or "unknown").strip()
+    if label == "ready":
+        return "ready"
+    if label == "stale":
+        changed = ", ".join(status.get("changed_fields") or []) or "branch_contract"
+        return f"prepare_required ({changed})"
+    if label == "missing_contract":
+        return "prepare_required (refresh prepared contract once)"
+    return "prepare_required"
+
+
+def print_branch_prepare_required(
+    branch: Path,
+    status: dict[str, object],
+    *,
+    stream,
+) -> None:
+    label = str(status.get("status") or "").strip()
+    if label == "stale":
+        print(
+            "Prepared branch inputs are stale. "
+            "Run `abel-alpha prepare-branch --branch ...` again before debug or run.",
+            file=stream,
+        )
+        changed = ", ".join(status.get("changed_fields") or []) or "branch_contract"
+        print(f"Prepare context: changed_fields={changed}", file=stream)
+    elif label == "missing_contract":
+        print(
+            "Prepared inputs exist, but this branch does not have a tracked prepare contract yet. "
+            "Run `abel-alpha prepare-branch --branch ...` once to refresh it before debug or run.",
+            file=stream,
+        )
+    else:
+        print(
+            "Branch inputs have not been prepared yet. "
+            "Run `abel-alpha prepare-branch --branch ...` before debug or run.",
+            file=stream,
+        )
+    prepared_at = str(status.get("prepared_at") or "").strip()
+    if prepared_at:
+        print(f"Prepare context: last_prepared_at={prepared_at}", file=stream)
+    print(f"Prepare context: next_step=abel-alpha prepare-branch --branch {branch}", file=stream)
 
 
 def branch_target_asset(branch_spec: dict, discovery: dict | None = None) -> str:
@@ -5264,6 +5448,7 @@ def build_window_availability_report(
     data_manifest: dict,
     overlap_mode: str,
     frontier_state: dict | None = None,
+    readiness: dict | None = None,
 ) -> dict:
     feeds = [item for item in (data_manifest.get("feeds") or []) if isinstance(item, dict)]
     target_feed = next((item for item in feeds if item.get("role") == "target"), {})
@@ -5271,6 +5456,13 @@ def build_window_availability_report(
     requested_start_ts = _coerce_utc_timestamp(requested_start)
     target_start_ts = _coerce_utc_timestamp(target_window.get("start"))
     target_end_ts = _coerce_utc_timestamp(target_window.get("end"))
+    coverage_hints = (readiness or {}).get("coverage_hints") or {}
+    target_safe_ts = _coerce_utc_timestamp(coverage_hints.get("target_safe_start"))
+    if target_safe_ts is None:
+        safe_candidates = [
+            item for item in [requested_start_ts, target_start_ts] if item is not None
+        ]
+        target_safe_ts = max(safe_candidates) if safe_candidates else None
     start_candidates = [item for item in [requested_start_ts, target_start_ts] if item is not None]
     end_candidates = [item for item in [target_end_ts] if item is not None]
     per_input_coverage: list[dict[str, object]] = []
@@ -5318,6 +5510,14 @@ def build_window_availability_report(
         if item.get("effective_start") == (effective_start_ts.isoformat() if effective_start_ts is not None else None)
         or item.get("native_end") == (effective_end_ts.isoformat() if effective_end_ts is not None else None)
     ]
+    start_alignment = {
+        "requested_start": requested_start,
+        "target_safe_start": target_safe_ts.isoformat() if target_safe_ts is not None else None,
+        "prepared_effective_start": effective_start_ts.isoformat() if effective_start_ts is not None else None,
+        "unavoidable_gap_days": gap_days_between(requested_start_ts, target_safe_ts),
+        "avoidable_gap_days": gap_days_between(target_safe_ts, effective_start_ts),
+        "total_gap_days": gap_days_between(requested_start_ts, effective_start_ts),
+    }
     return {
         "version": 1,
         "target_node": data_manifest.get("target_node"),
@@ -5329,6 +5529,7 @@ def build_window_availability_report(
             "start": effective_start_ts.isoformat() if effective_start_ts is not None else None,
             "end": effective_end_ts.isoformat() if effective_end_ts is not None else None,
         },
+        "start_alignment": start_alignment,
         "limiting_inputs": _dedupe_strings(limiting_inputs),
         "per_input_coverage": per_input_coverage,
     }
@@ -5404,6 +5605,7 @@ def build_context_guide_markdown(
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
     effective_window = (window_report or {}).get("effective_window") or {}
+    start_alignment = (window_report or {}).get("start_alignment") or {}
     lines = [
         f"# {target_asset} Branch Context Guide",
         "",
@@ -5421,8 +5623,11 @@ def build_context_guide_markdown(
         "",
         "## Window Availability",
         f"- requested_start: `{(window_report or {}).get('requested_start', 'unknown')}`",
+        f"- target_safe_start: `{start_alignment.get('target_safe_start', 'unknown')}`",
         f"- effective_window: `{effective_window.get('start', 'unknown')} -> {effective_window.get('end', 'unknown')}`",
+        f"- avoidable_gap_days: `{start_alignment.get('avoidable_gap_days', 'unknown')}`",
         f"- limiting_inputs: `{', '.join((window_report or {}).get('limiting_inputs') or []) or 'none'}`",
+        "- if avoidable_gap_days is large, try replacing limiting inputs before narrowing requested_start",
         "",
         "## Available Feeds",
         f"- names: `{', '.join(feed_names) or 'primary only'}`",
@@ -5449,6 +5654,47 @@ def _coerce_utc_timestamp(value: object) -> pd.Timestamp | None:
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
     return ts.tz_convert("UTC")
+
+
+def window_availability_advisory_lines(window_report: dict | None) -> list[str]:
+    report = window_report or {}
+    start_alignment = report.get("start_alignment") or {}
+    requested = str(start_alignment.get("requested_start") or "").strip()
+    target_safe = str(start_alignment.get("target_safe_start") or "").strip()
+    prepared = str(start_alignment.get("prepared_effective_start") or "").strip()
+    lines: list[str] = []
+    if requested or target_safe or prepared:
+        lines.append(
+            "start_alignment="
+            f"requested {requested or 'unknown'} -> "
+            f"target_safe {target_safe or 'unknown'} -> "
+            f"prepared_effective {prepared or 'unknown'}"
+        )
+    unavoidable_gap = start_alignment.get("unavoidable_gap_days")
+    if unavoidable_gap is not None:
+        lines.append(f"target_gap_days={unavoidable_gap}")
+    avoidable_gap = start_alignment.get("avoidable_gap_days")
+    if avoidable_gap is not None:
+        lines.append(f"avoidable_gap_days={avoidable_gap}")
+    if isinstance(avoidable_gap, int) and avoidable_gap > 0:
+        limiting = ", ".join(report.get("limiting_inputs") or []) or "none"
+        lines.append(f"time_cost_driver={limiting}")
+        lines.append(
+            "time_cost_guidance=replace limiting inputs before narrowing requested_start"
+        )
+    return lines
+
+
+def branch_window_runtime_lines(branch: Path) -> list[str]:
+    if not window_availability_path(branch).exists():
+        return []
+    try:
+        window_report = json.loads(
+            window_availability_path(branch).read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError:
+        return []
+    return window_availability_advisory_lines(window_report)
 
 
 def branch_state_path(branch: Path) -> Path:

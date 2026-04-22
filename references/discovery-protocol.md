@@ -65,6 +65,8 @@ When moving from session discovery into a branch:
 - write it explicitly into `selected_inputs`
 - use readiness to understand coverage, not to auto-ban ideas
 - run `prepare-branch` before a recorded round
+- rerun `prepare-branch` whenever `selected_inputs`, `requested_start`, or
+  overlap assumptions change
 
 ## Readiness Role
 
@@ -76,9 +78,15 @@ Use it to answer:
 - which discovery tickers have partial or stronger coverage
 - whether strict overlap is likely expensive
 - whether the session default start and a branch's explicit start are meaningfully different
+- how much extra start loss comes from the current selected inputs instead of
+  from the target itself
 
 Do not use it to collapse every branch onto the latest common start unless the
 branch really depends on strict overlap.
+
+When `window_availability.json` shows a large `avoidable_gap_days`, prefer
+swapping or re-probing the limiting inputs first. Narrow the branch start only
+when that time cost is intentional.
 
 ## Frontier Operations
 

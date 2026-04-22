@@ -65,6 +65,10 @@ the order of information:
 5. `debug-branch` runs semantic preflight
 6. `run-branch` records evidence only after the branch is semantically valid
 
+If you change `selected_inputs`, `requested_start`, overlap, or execution
+constraints after a prepare, treat the old prepared bundle as stale and rerun
+`prepare-branch` before `debug-branch` or `run-branch`.
+
 When `init-session --discover` is slow, treat that as a discovery phase, not as
 proof that nothing happened. The command and generated session artifacts should
 now make the state explicit:
@@ -89,6 +93,17 @@ now make the state explicit:
 
 Those files are not bookkeeping theater. They are the visible contract the
 agent writes against.
+
+`window_availability.json` now also makes the branch time cost legible:
+
+- `requested_start`
+- `target_safe_start`
+- `prepared_effective_start`
+- `avoidable_gap_days`
+- `limiting_inputs`
+
+Use that to decide whether the current frontier inputs are worth the extra time
+loss before you narrow the backtest window itself.
 
 ## What The Starter Engine Means
 
