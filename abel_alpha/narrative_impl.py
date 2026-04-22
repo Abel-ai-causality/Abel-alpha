@@ -19,6 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+from causal_edge.graph_nodes import (
+    GraphNodeRef,
+    coerce_graph_node_refs,
+    graph_node_assets,
+    graph_node_label,
+    graph_node_runtime_field,
+)
 
 from abel_alpha.doctor import (
     build_auth_handoff_command,
@@ -175,9 +182,10 @@ ENGINE_TEMPLATE = '''"""Research engine for {ticker}. Replace the starter baseli
 Default backtest behavior should follow branch.yaml first and the injected context second.
 If provided, self.context contains workspace/session/branch/discovery/readiness metadata from Abel-alpha.
 Use branch.yaml to make the critical research choices explicit:
-  - target
+  - target_asset
+  - target_node
   - requested_start
-  - selected_drivers
+  - selected_inputs
   - overlap_mode
 Write against DecisionContext instead of raw research helpers:
   - ctx.decision_index()
@@ -1331,18 +1339,15 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     if not branch_spec:
         raise RuntimeError(f"Missing {BRANCH_SPEC_FILENAME} under {branch}")
 
-    target = str(branch_spec.get("target") or discovery.get("ticker") or "").strip().upper()
-    if not target:
+    target_asset = branch_target_asset(branch_spec, discovery)
+    target_node = branch_target_node(branch_spec, discovery)
+    if not target_asset or not target_node:
         raise RuntimeError("Branch spec is missing a target ticker.")
-    selected_drivers = [
-        str(item).strip().upper()
-        for item in (branch_spec.get("selected_drivers") or [])
-        if str(item).strip()
-    ]
-    symbols = [target]
-    for ticker in selected_drivers:
-        if ticker not in symbols:
-            symbols.append(ticker)
+    selected_inputs = branch_selected_inputs(branch_spec)
+    symbols = [target_asset]
+    for asset in graph_node_assets(selected_inputs):
+        if asset not in symbols:
+            symbols.append(asset)
 
     requested_start = str(
         branch_spec.get("requested_start") or _get_backtest_start(discovery)
@@ -1355,8 +1360,9 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     dependencies = branch_dependencies_payload(
         branch=branch,
         branch_spec=branch_spec,
-        target=target,
-        selected_drivers=selected_drivers,
+        target_asset=target_asset,
+        target_node=target_node,
+        selected_inputs=selected_inputs,
         requested_start=requested_start,
     )
 
@@ -1412,16 +1418,20 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     cache_payload = json.loads(output_path.read_text(encoding="utf-8"))
     dependencies["cache"] = cache_payload
     output_path.write_text(json.dumps(dependencies, indent=2), encoding="utf-8")
-    runtime_profile = build_runtime_profile_payload(target=target)
+    runtime_profile = build_runtime_profile_payload(
+        target_asset=target_asset,
+        target_node=target_node,
+    )
     execution_constraints = build_execution_constraints_payload(branch_spec)
     data_manifest = build_data_manifest_payload(
-        target=target,
-        selected_drivers=selected_drivers,
+        target_asset=target_asset,
+        target_node=target_node,
+        selected_inputs=selected_inputs,
         cache_payload=cache_payload,
         readiness=readiness,
     )
     probe_samples = build_probe_samples_payload(
-        target=target,
+        target_asset=target_asset,
         requested_start=requested_start,
         data_manifest=data_manifest,
     )
@@ -1443,7 +1453,8 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     )
     context_guide_path(branch).write_text(
         build_context_guide_markdown(
-            target=target,
+            target_asset=target_asset,
+            target_node=target_node,
             runtime_profile=runtime_profile,
             execution_constraints=execution_constraints,
             data_manifest=data_manifest,
@@ -1485,8 +1496,9 @@ def prepare_branch_inputs(args: argparse.Namespace) -> int:
     print(f"  data_manifest: {data_manifest_path(branch).relative_to(session)}")
     print(f"  context_guide: {context_guide_path(branch).relative_to(session)}")
     print(f"  probe_samples: {probe_samples_path(branch).relative_to(session)}")
-    print(f"  target: {target}")
-    print(f"  selected_drivers: {len(selected_drivers)}")
+    print(f"  target_asset: {target_asset}")
+    print(f"  target_node: {target_node}")
+    print(f"  selected_inputs: {len(selected_inputs)}")
     print(f"  symbols: {', '.join(symbols)}")
     print(f"  cache_results: ok={len(warm_ok)} fail={len(warm_fail)}")
     for line in advisory_lines:
@@ -2558,7 +2570,10 @@ def build_promotion_bundle_readme(
     branch_spec: dict,
     latest: dict[str, str],
 ) -> str:
-    selected = format_simple_nodes(branch_spec.get("selected_drivers") or [], limit=12)
+    selected = format_graph_nodes(
+        [ref.to_payload() for ref in branch_selected_inputs(branch_spec)],
+        limit=12,
+    )
     return f"""# {branch.name} Promotion Bundle
 
 generated by Abel-alpha narrative layer
@@ -2566,10 +2581,11 @@ generated by Abel-alpha narrative layer
 ## Summary
 
 - branch_id: `{branch.name}`
-- target: `{branch_spec.get("target", "unknown")}`
+- target_asset: `{branch_target_asset(branch_spec) or "unknown"}`
+- target_node: `{branch_target_node(branch_spec) or "unknown"}`
 - requested_start: `{branch_spec.get("requested_start", "unknown")}`
 - overlap_mode: `{branch_spec.get("overlap_mode", "target_only")}`
-- selected_drivers: `{selected}`
+- selected_inputs: `{selected}`
 - latest_round: `{latest.get("round_id", "none")}`
 - latest_decision: `{latest.get("decision", "n/a")}`
 - latest_verdict: `{latest.get("verdict", "n/a")}`
@@ -2601,7 +2617,10 @@ def build_thesis(branch: dict, discovery: dict, readiness: dict) -> str:
     blanket = format_discovery_nodes(discovery.get("blanket_new", []), limit=5)
     usable = format_simple_nodes(readiness_usable_tickers(readiness), limit=8)
     start_covered = format_simple_nodes(readiness_start_covered_tickers(readiness), limit=8)
-    selected = format_simple_nodes(branch_spec.get("selected_drivers") or [], limit=8)
+    selected = format_graph_nodes(
+        [ref.to_payload() for ref in branch_selected_inputs(branch_spec)],
+        limit=8,
+    )
     return f"""# {branch["branch_id"]} Thesis
 
 generated by Abel-alpha narrative layer
@@ -2620,10 +2639,11 @@ Latest decision is `{latest.get("decision", "pending")}` with verdict `{latest.g
 ## Input Universe
 
 - target: `{discovery.get("ticker", branch["ticker"])}`
+- target_node: `{branch_target_node(branch_spec, discovery)}`
 - discovery_source: `{discovery.get("source", "unknown")}`
 - direct_parents: `{parents}`
 - blanket_candidates: `{blanket}`
-- selected_drivers: `{selected}`
+- selected_inputs: `{selected}`
 - usable_tickers: `{usable}`
 - start_covered_tickers: `{start_covered}`
 
@@ -3157,8 +3177,11 @@ def branch_thesis_short(branch: dict) -> str:
     if latest.get("description"):
         return str(latest.get("description") or "").strip()
     branch_spec = load_branch_spec(branch["branch_dir"])
-    selected = format_simple_nodes(branch_spec.get("selected_drivers") or [], limit=5)
-    return f"target {branch['ticker']} with drivers {selected}"
+    selected = format_graph_nodes(
+        [ref.to_payload() for ref in branch_selected_inputs(branch_spec)],
+        limit=5,
+    )
+    return f"target {branch['ticker']} with inputs {selected}"
 
 
 def best_branch_row(rows: list[dict[str, str]]) -> dict[str, str] | None:
@@ -3460,11 +3483,10 @@ def branch_runtime_advisory_lines(
     return lines
 
 
-def _branch_driver_list(branch_spec: dict) -> list[str]:
+def _branch_input_list(branch_spec: dict) -> list[str]:
     return [
-        str(item).strip().upper()
-        for item in (branch_spec.get("selected_drivers") or [])
-        if str(item).strip()
+        ref.node_id
+        for ref in branch_selected_inputs(branch_spec)
     ]
 
 
@@ -3476,24 +3498,22 @@ def branch_context_summary_lines(
     readiness: dict,
 ) -> list[str]:
     branch_spec = load_branch_spec(branch)
-    target = str(
-        branch_spec.get("target")
-        or discovery.get("ticker")
-        or session.parent.name.upper()
-    ).strip().upper()
+    target = branch_target_asset(branch_spec, discovery) or session.parent.name.upper()
+    target_node = branch_target_node(branch_spec, discovery)
     requested_start = str(
         branch_spec.get("requested_start") or _get_backtest_start(discovery)
     ).strip()
     session_start = _get_backtest_start(discovery)
     coverage_hints = (readiness or {}).get("coverage_hints") or {}
-    drivers = _branch_driver_list(branch_spec)
-    drivers_text = ", ".join(drivers) if drivers else "none"
+    inputs = _branch_input_list(branch_spec)
+    inputs_text = ", ".join(inputs) if inputs else "none"
     starter_scaffold = branch_uses_default_scaffold(branch, discovery, readiness, session)
     inputs_prepared = branch_inputs_ready(branch)
 
     lines = [
-        f"target={target}",
-        f"selected_drivers={len(drivers)} ({drivers_text})",
+        f"target_asset={target}",
+        f"target_node={target_node}",
+        f"selected_inputs={len(inputs)} ({inputs_text})",
         f"requested_start={requested_start}",
     ]
     if requested_start == session_start:
@@ -3724,8 +3744,11 @@ def build_branch_context(
     dependencies = {}
     if dependencies_path(branch).exists():
         dependencies = json.loads(dependencies_path(branch).read_text(encoding="utf-8"))
+    target_asset = branch_target_asset(branch_spec, discovery)
+    target_node = branch_target_node(branch_spec, discovery)
     runtime_profile = build_runtime_profile_payload(
-        target=str(branch_spec.get("target") or discovery.get("ticker") or "").strip().upper()
+        target_asset=target_asset,
+        target_node=target_node,
     )
     if runtime_profile_path(branch).exists():
         runtime_profile = json.loads(runtime_profile_path(branch).read_text(encoding="utf-8"))
@@ -3735,12 +3758,15 @@ def build_branch_context(
             execution_constraints_path(branch).read_text(encoding="utf-8")
         )
     data_manifest = build_data_manifest_payload(
-        target=str(runtime_profile.get("target") or discovery.get("ticker") or "").strip().upper(),
-        selected_drivers=[
-            str(item).strip().upper()
-            for item in (branch_spec.get("selected_drivers") or [])
-            if str(item).strip()
-        ],
+        target_asset=str(
+            runtime_profile.get("target_asset")
+            or runtime_profile.get("target")
+            or target_asset
+            or discovery.get("ticker")
+            or ""
+        ).strip().upper(),
+        target_node=str(runtime_profile.get("target_node") or target_node or "").strip(),
+        selected_inputs=branch_selected_inputs(branch_spec),
         cache_payload=(dependencies.get("cache") or {}) if isinstance(dependencies, dict) else {},
         readiness=readiness,
     )
@@ -3752,8 +3778,12 @@ def build_branch_context(
         "kind": "bars",
         "adapter": str((cache or {}).get("adapter") or "abel"),
         "timeframe": str((cache or {}).get("timeframe") or "1d"),
-        "symbol": discovery.get("ticker", session.parent.name.upper()),
+        "symbol": str(runtime_profile.get("target") or target_asset or discovery.get("ticker", session.parent.name.upper())),
         "profile": str((cache or {}).get("profile") or "daily"),
+        "node_id": str(runtime_profile.get("target_node") or target_node or ""),
+        "default_field": graph_node_runtime_field(
+            str(runtime_profile.get("target_node") or target_node or "").rpartition(".")[2] or "price"
+        ),
     }
     cache_root = (cache or {}).get("cache_root")
     if cache_root:
@@ -3773,6 +3803,8 @@ def build_branch_context(
             "timeframe": str(item.get("timeframe") or primary_feed["timeframe"]),
             "symbol": symbol,
             "profile": str(item.get("profile") or primary_feed["profile"]),
+            "node_id": str(item.get("node_id") or ""),
+            "default_field": str(item.get("runtime_field") or "close"),
             **({"cache_root": item.get("cache_root")} if item.get("cache_root") else {}),
         }
     return {
@@ -4045,36 +4077,83 @@ def write_branch_spec(branch: Path, payload: dict) -> None:
     )
 
 
-def discovery_candidate_tickers(discovery: dict) -> list[str]:
-    target = str(discovery.get("ticker") or "").strip().upper()
-    ordered: list[str] = []
-    for section in ("parents", "blanket_new", "children"):
+def branch_target_asset(branch_spec: dict, discovery: dict | None = None) -> str:
+    target = str(
+        branch_spec.get("target_asset")
+        or branch_spec.get("target")
+        or (discovery or {}).get("ticker")
+        or ""
+    ).strip().upper()
+    return target
+
+
+def branch_target_node(branch_spec: dict, discovery: dict | None = None) -> str:
+    raw = (
+        branch_spec.get("target_node")
+        or (discovery or {}).get("target_node")
+        or branch_target_asset(branch_spec, discovery)
+        or (discovery or {}).get("ticker")
+        or ""
+    )
+    refs = coerce_graph_node_refs([raw])
+    return refs[0].node_id if refs else ""
+
+
+def branch_selected_inputs(branch_spec: dict) -> list[GraphNodeRef]:
+    explicit = branch_spec.get("selected_inputs")
+    if explicit:
+        return coerce_graph_node_refs(explicit)
+    return coerce_graph_node_refs(branch_spec.get("selected_drivers") or [])
+
+
+def format_graph_nodes(items: list[object], *, limit: int = 8, include_roles: bool = False) -> str:
+    rendered = [
+        graph_node_label(item, include_roles=include_roles)
+        for item in items[:limit]
+    ]
+    rendered = [item for item in rendered if item]
+    return ", ".join(rendered) or "none recorded"
+
+
+def discovery_candidate_nodes(discovery: dict) -> list[GraphNodeRef]:
+    target_node = branch_target_node({}, discovery)
+    ordered: list[GraphNodeRef] = []
+    seen: set[str] = set()
+    for section, fallback_role in (
+        ("parents", "parent"),
+        ("blanket_new", "blanket"),
+        ("children", "child"),
+    ):
         for item in discovery.get(section) or []:
-            if isinstance(item, dict):
-                ticker = str(item.get("ticker") or "").strip().upper()
-            else:
-                ticker = str(item or "").strip().upper()
-            if not ticker or ticker == target or ticker in ordered:
+            refs = coerce_graph_node_refs([item], extra_roles=[fallback_role])
+            if not refs:
                 continue
-            ordered.append(ticker)
+            ref = refs[0]
+            if not ref.node_id or ref.node_id == target_node or ref.node_id in seen:
+                continue
+            ordered.append(ref)
+            seen.add(ref.node_id)
     return ordered
 
 
-def suggest_branch_drivers(discovery: dict, readiness: dict, *, limit: int = 5) -> list[str]:
-    discovered = discovery_candidate_tickers(discovery)
+def suggest_branch_inputs(discovery: dict, readiness: dict, *, limit: int = 5) -> list[GraphNodeRef]:
+    discovered = discovery_candidate_nodes(discovery)
     usable = set(readiness_usable_tickers(readiness))
-    prioritized = [ticker for ticker in discovered if ticker in usable]
-    fallback = [ticker for ticker in discovered if ticker not in usable]
+    prioritized = [item for item in discovered if item.asset in usable]
+    fallback = [item for item in discovered if item.asset not in usable]
     return (prioritized + fallback)[:limit]
 
 
 def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict) -> dict:
-    suggested = suggest_branch_drivers(discovery, readiness, limit=5)
+    target_asset = str(discovery.get("ticker") or branch.parent.parent.parent.name).strip().upper()
+    target_node = branch_target_node({"target_asset": target_asset}, discovery)
+    suggested = suggest_branch_inputs(discovery, readiness, limit=5)
     selected = suggested[: min(3, len(suggested))]
     return {
-        "version": 1,
+        "version": 2,
         "branch_id": branch.name,
-        "target": discovery.get("ticker", branch.parent.parent.parent.name.upper()),
+        "target_asset": target_asset,
+        "target_node": target_node,
         "hypothesis": "",
         "source_type": "causal",
         "method_family": "graph",
@@ -4082,11 +4161,11 @@ def build_default_branch_spec(*, branch: Path, discovery: dict, readiness: dict)
         "requested_start": _get_backtest_start(discovery),
         "resolved_start_policy": "requested",
         "overlap_mode": "target_only",
-        "selected_drivers": selected,
-        "suggested_drivers": suggested,
+        "selected_inputs": [ref.to_payload() for ref in selected],
+        "suggested_inputs": [ref.to_payload() for ref in suggested],
         "data_requirements": {
             "timeframe": "1d",
-            "fields": ["close"],
+            "fields": ["close", "volume"],
         },
     }
 
@@ -4095,15 +4174,17 @@ def branch_dependencies_payload(
     *,
     branch: Path,
     branch_spec: dict,
-    target: str,
-    selected_drivers: list[str],
+    target_asset: str,
+    target_node: str,
+    selected_inputs: list[GraphNodeRef],
     requested_start: str,
 ) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "branch_id": branch.name,
-        "target": target,
-        "selected_drivers": selected_drivers,
+        "target_asset": target_asset,
+        "target_node": target_node,
+        "selected_inputs": [ref.to_payload() for ref in selected_inputs],
         "requested_start": requested_start,
         "overlap_mode": branch_spec.get("overlap_mode") or "target_only",
         "data_requirements": branch_spec.get("data_requirements") or {"timeframe": "1d"},
@@ -4111,10 +4192,12 @@ def branch_dependencies_payload(
     }
 
 
-def build_runtime_profile_payload(*, target: str) -> dict:
+def build_runtime_profile_payload(*, target_asset: str, target_node: str) -> dict:
     return {
         "profile": "daily",
-        "target": target,
+        "target": target_asset,
+        "target_asset": target_asset,
+        "target_node": target_node,
         "decision_event": "bar_close",
         "execution_delay_bars": 1,
         "return_basis": "close_to_close",
@@ -4131,8 +4214,9 @@ def build_execution_constraints_payload(branch_spec: dict) -> dict:
 
 def build_data_manifest_payload(
     *,
-    target: str,
-    selected_drivers: list[str],
+    target_asset: str,
+    target_node: str,
+    selected_inputs: list[GraphNodeRef],
     cache_payload: dict,
     readiness: dict,
 ) -> dict:
@@ -4147,18 +4231,26 @@ def build_data_manifest_payload(
         if isinstance(item, dict) and str(item.get("ticker") or "").strip()
     }
     feeds: list[dict[str, object]] = []
-    ordered_symbols = [target] + [ticker for ticker in selected_drivers if ticker != target]
     adapter = str(cache_payload.get("adapter") or "abel")
     timeframe = str(cache_payload.get("timeframe") or "1d")
     profile = str(cache_payload.get("profile") or "daily")
     cache_root = cache_payload.get("cache_root")
-    for symbol in ordered_symbols:
-        cache_item = cache_results.get(symbol, {})
-        readiness_item = readiness_results.get(symbol, {})
-        feed_entry = {
-            "name": "primary" if symbol == target else symbol,
-            "symbol": symbol,
-            "role": "target" if symbol == target else "driver",
+    target_refs = coerce_graph_node_refs([target_node])
+    target_ref = target_refs[0] if target_refs else None
+    if target_ref is None:
+        raise RuntimeError("Target node could not be normalized into a graph node reference.")
+
+    def build_feed_entry(*, name: str, ref: GraphNodeRef, role: str) -> dict[str, object]:
+        cache_item = cache_results.get(ref.asset, {})
+        readiness_item = readiness_results.get(ref.asset, {})
+        feed_entry: dict[str, object] = {
+            "name": name,
+            "node_id": ref.node_id,
+            "asset": ref.asset,
+            "field": ref.field,
+            "symbol": ref.asset,
+            "role": role,
+            "runtime_field": graph_node_runtime_field(ref),
             "adapter": adapter,
             "timeframe": timeframe,
             "profile": profile,
@@ -4170,18 +4262,25 @@ def build_data_manifest_payload(
         }
         if cache_root:
             feed_entry["cache_root"] = cache_root
-        feeds.append(feed_entry)
+        return feed_entry
+
+    feeds.append(build_feed_entry(name="primary", ref=target_ref, role="target"))
+    for ref in selected_inputs:
+        if ref.node_id == target_ref.node_id:
+            continue
+        feeds.append(build_feed_entry(name=ref.node_id, ref=ref, role="input"))
     return {
-        "version": 1,
-        "target": target,
-        "selected_drivers": selected_drivers,
+        "version": 2,
+        "target_asset": target_asset,
+        "target_node": target_node,
+        "selected_inputs": [ref.to_payload() for ref in selected_inputs],
         "feeds": feeds,
     }
 
 
 def build_probe_samples_payload(
     *,
-    target: str,
+    target_asset: str,
     requested_start: str,
     data_manifest: dict,
 ) -> dict:
@@ -4201,8 +4300,9 @@ def build_probe_samples_payload(
         except Exception:
             samples = [item for item in [start, end] if item]
     return {
-        "version": 1,
-        "target": target,
+        "version": 2,
+        "target_asset": target_asset,
+        "target_node": data_manifest.get("target_node"),
         "requested_start": requested_start,
         "sample_decision_dates": samples,
     }
@@ -4210,7 +4310,8 @@ def build_probe_samples_payload(
 
 def build_context_guide_markdown(
     *,
-    target: str,
+    target_asset: str,
+    target_node: str,
     runtime_profile: dict,
     execution_constraints: dict,
     data_manifest: dict,
@@ -4220,10 +4321,19 @@ def build_context_guide_markdown(
         for item in (data_manifest.get("feeds") or [])
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
+    feed_examples = [
+        (
+            f"- `{item.get('name')}` -> `ctx.feed(\"{item.get('name')}\").asof_series(\"{item.get('runtime_field', 'close')}\")`"
+        )
+        for item in (data_manifest.get("feeds") or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip() and str(item.get("name")) != "primary"
+    ]
     lines = [
-        f"# {target} Branch Context Guide",
+        f"# {target_asset} Branch Context Guide",
         "",
         "## Runtime",
+        f"- target_asset: `{target_asset}`",
+        f"- target_node: `{target_node}`",
         f"- profile: `{runtime_profile.get('profile', 'daily')}`",
         f"- decision_event: `{runtime_profile.get('decision_event', 'bar_close')}`",
         f"- execution_delay_bars: `{runtime_profile.get('execution_delay_bars', 1)}`",
@@ -4235,9 +4345,10 @@ def build_context_guide_markdown(
         "",
         "## Available Feeds",
         f"- names: `{', '.join(feed_names) or 'primary only'}`",
-        "- use `ctx.target.series(\"close\")` for target history",
-        "- use `ctx.feed(\"<name>\").asof_series(\"close\")` for aligned driver history",
+        f"- use `ctx.target.series(\"{graph_node_runtime_field(target_node.rpartition('.')[2] or 'price')}\")` for the target node",
+        "- each non-primary feed is named by its graph node id",
         "- use `ctx.points()` when you need path-sensitive cross-calendar logic",
+        *feed_examples[:6],
         "",
         "## Suggested Loop",
         "1. Inspect `probe_samples.json` and `data_manifest.json`.",
