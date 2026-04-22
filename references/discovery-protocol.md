@@ -25,6 +25,7 @@ strategy.
 After live discovery, the session owns:
 
 - `discovery.json`: candidate snapshot
+- `frontier.json`: expandable graph-node universe plus probe memory
 - `readiness.json`: advisory coverage report
 
 The branch then selects from that session context in `branch.yaml`.
@@ -38,8 +39,8 @@ Use this as a priority order, not a hard formula:
 3. children-derived hop-2 candidates
 4. sector or market peers only when they add a real mechanism
 
-The spirit is simple: start close to the target, then widen only when the
-branch thesis earns that extra breadth.
+The spirit is simple: start close to the target, then widen through explicit
+frontier operations when the branch thesis earns that extra breadth.
 If the first candidates look odd, do not discard them just because they are
 small, obscure, or low-attention. Strange parents are often the point of causal
 discovery.
@@ -48,8 +49,10 @@ discovery.
 
 When moving from session discovery into a branch:
 
-- choose a small initial driver set
-- write it explicitly into `branch.yaml`
+- inspect the frontier before inventing extra tickers
+- probe candidate nodes before committing to them
+- choose a small initial input set
+- write it explicitly into `selected_inputs`
 - use readiness to understand coverage, not to auto-ban ideas
 - run `prepare-branch` before a recorded round
 
@@ -66,6 +69,16 @@ Use it to answer:
 
 Do not use it to collapse every branch onto the latest common start unless the
 branch really depends on strict overlap.
+
+## Frontier Operations
+
+Default widening should stay graph-grounded:
+
+- inspect the frontier with `abel-alpha frontier-status --session ...`
+- probe promising nodes with `abel-alpha probe-nodes --session ... --node <node_id>`
+- expand outward with `abel-alpha expand-frontier --session ... --from-node <node_id>`
+
+Do not treat free-form ticker guessing as the default path.
 
 ## Optional Expansion Heuristics
 
